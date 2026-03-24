@@ -32,7 +32,7 @@ Sockaddr& Sockaddr::operator=(Sockaddr & other)
 	return (*this);
 }
 
-short unsigned int &		Sockaddr::getFamily(void) {return(_addr.sin_family);}
+short unsigned int &	Sockaddr::getFamily(void) {return(_addr.sin_family);}
 unsigned short int &	Sockaddr::getPort(void) {return(_addr.sin_port);}
 struct in_addr &	Sockaddr::getAddrStruct(void) {return(_addr.sin_addr);}
 in_addr_t &		Sockaddr::getAddr(void) {return(_addr.sin_addr.s_addr);}

@@ -39,6 +39,7 @@ void	Server::handle_event(Epoll & manager)
 	if (fd == -1)
 		return ;
 	Client	*client = new Client(fd);
-	fcntl(fd, F_SETFL, O_NONBLOCK);
+	if (fcntl(fd, F_SETFL, O_NONBLOCK) == -1)
+		client->closeConnection(manager);
 	manager.add(client);
 }

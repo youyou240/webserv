@@ -3,9 +3,11 @@
 
 Socket::Socket(void)
 {
-	_sockfd = socket(AF_INET, SOCK_STREAM, SOCK_NONBLOCK);
+	_sockfd = socket(AF_INET, SOCK_STREAM, 0);
 	if (_sockfd == -1)
 		throw badExec();
+	if (fcntl(_sockfd, F_SETFL, O_NONBLOCK) == -1)
+    		throw badExec();
 	if (bind(_sockfd, (struct sockaddr *)&_addr.getAddrStruct(), sizeof(struct sockaddr)) == -1)
 		throw badExec();
 	_serv.getFD() = _sockfd;
@@ -16,9 +18,11 @@ Socket::Socket(void)
 
 Socket::Socket(unsigned short int port)
 {
-	_sockfd = socket(AF_INET, SOCK_STREAM, SOCK_NONBLOCK);
+	_sockfd = socket(AF_INET, SOCK_STREAM, 0);
 	if (_sockfd == -1)
 		throw badExec();
+	if (fcntl(_sockfd, F_SETFL, O_NONBLOCK) == -1)
+    		throw badExec();
 	_addr.getPort() = htons(port);
 	if (bind(_sockfd, (struct sockaddr *)&_addr.getAddrStruct(), sizeof(struct sockaddr)) == -1)
 		throw badExec();
