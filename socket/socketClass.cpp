@@ -23,7 +23,7 @@ Socket::Socket(unsigned short int port)
 	if (fcntl(_sockfd, F_SETFL, O_NONBLOCK) == -1)
     		throw badExec();
 	_addr.getPort() = htons(port);
-	if (bind(_sockfd, (struct sockaddr *)&_addr.getAddrStruct(), sizeof(struct sockaddr)) == -1)
+	if (bind(_sockfd, (struct sockaddr *)&_addr.getStruct(), sizeof(struct sockaddr)) == -1)
 		throw badExec();
 	_serv.getFD() = _sockfd;
 	listen(_sockfd, 128);
@@ -60,7 +60,7 @@ void Socket::run(void)
 				continue ;
 			role->handle_event(_manager);
 		}
-		std::cout << this->getServ();
+		std::cout << this->getServ() << std::endl;;
 	}
 }
 	

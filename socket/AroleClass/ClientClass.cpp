@@ -17,7 +17,11 @@ Client::~Client(void)
 	this->_client -= 1;
 	for(std::vector<Client *>::iterator it = _activeClient.begin(); it != _activeClient.end(); ++it) {
 		if (*it == this)
+		{
 			_activeClient.erase(it);
+			break ;
+		}
+			
 	}
 }
 
