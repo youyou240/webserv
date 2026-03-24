@@ -12,15 +12,15 @@ class Sockaddr {
 
 public:
 	Sockaddr(void);
-	Sockaddr(Sockaddr const &);
+	Sockaddr(Sockaddr &);
 	~Sockaddr(void);
 
-	Sockaddr& operator=(Sockaddr const &);
+	Sockaddr& operator=(Sockaddr &);
 
-	short int &		getFamily(void) const;
-	unsigned short int &	getPort(void) const;
-	struct in_addr &	getAddrStruct(void) const;
-	in_addr_t &		getAddr(void) const;
+	short unsigned int &		getFamily(void);
+	unsigned short int &	getPort(void);
+	struct in_addr &	getAddrStruct(void);
+	in_addr_t &		getAddr(void);
 };
 
-std::ostream &	operator<<(std::ostream &, Sockaddr const &);
+std::ostream &	operator<<(std::ostream &, Sockaddr &);

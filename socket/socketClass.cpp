@@ -36,6 +36,7 @@ Socket& Socket::operator=(Socket const & other)
 {
 	if (this == &other)
 		return (*this);
+	return (*this);
 }
 
 int		Socket::getSockfd(void) const {return(_sockfd);}
@@ -62,10 +63,10 @@ void Socket::run(void)
 void	Socket::closeAll(void)
 {
 	_serv.closeAll(_manager);
-	_manager.close();
+	_manager.closeFD();
 }
 
-std::ostream &	operator<<(std::ostream & o, Socket const & other)
+std::ostream &	operator<<(std::ostream & o, Socket & other)
 {
 	o << "sockFd=" << other.getSockfd() << std::endl << other.getAddr() << std::endl << other.getEpoll() << std::endl;
 	return (o);

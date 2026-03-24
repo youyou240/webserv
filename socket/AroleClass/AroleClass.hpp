@@ -8,8 +8,10 @@
 # include <vector>
 # include <string>
 # include <ctime>
+# include <unistd.h>
 
 class Client;
+class Epoll;
 
 class Arole {
 
@@ -49,7 +51,7 @@ public:
 	
 	unsigned int	getNbServer(void) const;
 	unsigned int	getNbClient(void) const;
-	void		closeAll(Epoll const &);
+	void		closeAll(Epoll &);
 };
 
 

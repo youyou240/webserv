@@ -1,6 +1,9 @@
 # include "AroleClass.hpp"
 #include <sys/epoll.h>
 
+std::vector<Client *> Arole::_activeClient;
+unsigned int Arole::_client = 0;
+
 Client::Client(int fd) : Arole(fd), _bytes_send(0), _complete(false), _lastActivity(time(NULL))
 {
 	this->_client += 1;
@@ -12,7 +15,7 @@ Client::Client(int fd) : Arole(fd), _bytes_send(0), _complete(false), _lastActiv
 Client::~Client(void)
 {
 	this->_client -= 1;
-	for(std::vector<Client &>::iterator it = _activeClient.begin(); it != _activeClient.end(); ++it) {
+	for(std::vector<Client *>::iterator it = _activeClient.begin(); it != _activeClient.end(); ++it) {
 		if (*it == this)
 			_activeClient.erase(it);
 	}
@@ -40,17 +43,17 @@ void	Client::genResponse(void)
 	else if (_request.find("style") != std::string::npos)
 		_response = "mec de cite simple";
 	else
-		_respone = "error 404 request=" + _request;
+		_response = "error 404 request=" + _request;
 	_bytes_send = 0;
 	this->cleanRequest();
 }
 	
-void	Client::handle_event(int event, Epoll & manager)
+void	Client::handle_event(Epoll & manager)
 {
-	if (event & EPOLLIN)
+	if (this->_ev.events & EPOLLIN)
 	{
 		char buffer[4096];
-		int bytes_read = recv(this->fd, buffer, sizeof(buffer), 0);
+		int bytes_read = recv(this->_fd, buffer, sizeof(buffer), 0);
 		if (bytes_read == -1)
 		{
 			if (errno == EAGAIN || errno == EWOULDBLOCK)
@@ -76,11 +79,11 @@ void	Client::handle_event(int event, Epoll & manager)
 			manager.mod(this);
 		}
 	}
-	else if (event & EPOLLOUT)
+	else if (this->_ev.events & EPOLLOUT)
 	{
 		const char*	data_to_send = _response.c_str() + _bytes_send;
 		int 		bytes_left_to_send = _response.length() - _bytes_send;
-		int		bytes_sent_now = send(this->fd, data_to_send, bytes_left_to_send, 0);
+		int		bytes_sent_now = send(this->_fd, data_to_send, bytes_left_to_send, 0);
 
 		if (bytes_sent_now == -1)
 		{
@@ -102,7 +105,7 @@ void	Client::handle_event(int event, Epoll & manager)
 
 void	Client::closeConnection(Epoll & manager)
 {
-	manager.del(*this);
+	manager.del(this);
 	close(this->_fd);
 	delete this;
 }

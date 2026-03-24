@@ -7,6 +7,7 @@
 # include <string.h>
 # include <ostream>
 # include <cerrno>
+# include <unistd.h>
 
 # define MAX_REQUEST	4096
 # define MIN_MAX	64
@@ -26,10 +27,10 @@ public:
 	~Epoll(void);
 
 
-	int&					getFD(void) const;
-	std::vector<struct epoll_event>&	getEvents(void) const;
+	int&					getFD(void);
+	std::vector<struct epoll_event>&	getEvents(void);
 
-	void	close(void);
+	void	closeFD(void);
 
 	int	wait(void);
 	void	add(Arole *);
@@ -43,4 +44,4 @@ public:
 	};
 };
 
-std::ostream &	operator<<(std::ostream &, Epoll const &);
+std::ostream &	operator<<(std::ostream &, Epoll &);

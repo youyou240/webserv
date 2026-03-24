@@ -43,4 +43,4 @@ public:
 
 };
 
-std::ostream &	operator<<(std::ostream &, Socket const &);
+std::ostream &	operator<<(std::ostream &, Socket &);

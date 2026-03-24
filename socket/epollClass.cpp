@@ -12,8 +12,7 @@ Epoll::Epoll(void) : _events(MIN_MAX)
 
 Epoll::Epoll(Epoll const & other)
 {
-	_fd = other.getFD();
-	_events = other.getEvents();
+	(void)other;
 }
 
 Epoll::~Epoll(void)
@@ -23,22 +22,21 @@ Epoll::~Epoll(void)
 
 Epoll & Epoll::operator=(Epoll const & other)
 {
-	_fd = other.getFD();
-	_events = other.getEvents();
+	(void)other;
 	return (*this);
 }
 
-int&	Epoll::getFD(void) const
+int&	Epoll::getFD(void)
 {
 	return (this->_fd);
 }
 
-std::vector<struct epoll_event>&	Epoll::getEvents(void) const
+std::vector<struct epoll_event>&	Epoll::getEvents(void)
 {
 	return (this->_events);
 }
 
-void	Epoll::close(void)
+void	Epoll::closeFD(void)
 {
 	close(_fd);
 }
@@ -57,23 +55,38 @@ int	Epoll::wait(void)
 
 void	Epoll::add(Arole * role)
 {
+	Client *conv;
+	
 	if (epoll_ctl(_fd, EPOLL_CTL_ADD, role->getFD(), &role->getStructEvent()) == -1)
-		role->closeConnection(*this);
+	{	
+		if ((conv = dynamic_cast<Client *> (role)))
+			conv->closeConnection(*this);
+	}
 }
 
-int	Epoll::mod(Arole * role)
+void	Epoll::mod(Arole * role)
 {
+	Client *conv;
+	
 	if (epoll_ctl(_fd, EPOLL_CTL_MOD, role->getFD(), &role->getStructEvent()) == -1)
-		role->closeConnection(*this);
+	{	
+		if ((conv = dynamic_cast<Client *> (role)))
+			conv->closeConnection(*this);
+	}
 }
 
-int	Epoll::del(Arole * role)
+void	Epoll::del(Arole * role)
 {
+	Client *conv;
+	
 	if (epoll_ctl(_fd, EPOLL_CTL_DEL, role->getFD(), NULL) == -1)
-		role->closeConnection(*this);
+	{	
+		if ((conv = dynamic_cast<Client *> (role)))
+			conv->closeConnection(*this);
+	}
 }
 
-std::ostream &	operator<<(std::ostream & o, Epoll const & other)
+std::ostream &	operator<<(std::ostream & o, Epoll & other)
 {
 	o << other.getFD();
 	return (o);

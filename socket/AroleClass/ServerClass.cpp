@@ -1,14 +1,16 @@
 #include "AroleClass.hpp"
 #include <vector>
 
-Server::Server(void) : Arole(), _countID(0)
+unsigned int Arole::_server = 0;
+
+Server::Server(void) : Arole()
 {
 	this->_server += 1;
 	this->_ev.events = EPOLLIN;
 	this->_ev.data.ptr = this;
 }
 
-Server::Server(int fd) : Arole(fd), _countID(0) 
+Server::Server(int fd) : Arole(fd)
 {
 	this->_server += 1;
 	this->_ev.events = EPOLLIN;
@@ -20,15 +22,14 @@ Server::~Server(void)
 	this->_server -= 1;
 }
 
-void		Server::setFdTable(std::vector<int> const & fdT) {_fdTable = &fdT;}
-unsigned int	Server::getNbServer(void) {return(_server);}
-unsigned int	Server::getNbClient(void) {return(_client);}
+unsigned int	Server::getNbServer(void) const {return(_server);}
+unsigned int	Server::getNbClient(void) const {return(_client);}
 
-void		Server::closeAll(Epoll const & manager)
+void		Server::closeAll(Epoll & manager)
 {
 	for (std::vector<Client *>::iterator it = _activeClient.begin(); it != _activeClient.end(); ++it)
-		*it->closeConnection(manager);
-	manager.del(*this);
+		(*it)->closeConnection(manager);
+	manager.del(this);
 	close(this->_fd);
 }
 
