@@ -43,3 +43,9 @@ void	Server::handle_event(Epoll & manager)
 		client->closeConnection(manager);
 	manager.add(client);
 }
+
+std::ostream &	operator<<(std::ostream & o, Server const & serv)
+{
+	o << "NBserver=" << serv.getNbServer() << "\tNBclients=" << serv.getNbClient();
+	return (o);
+};

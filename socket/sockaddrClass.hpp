@@ -17,7 +17,8 @@ public:
 
 	Sockaddr& operator=(Sockaddr &);
 
-	short unsigned int &		getFamily(void);
+	struct sockaddr_in&	getStruct(void);
+	short unsigned int &	getFamily(void);
 	unsigned short int &	getPort(void);
 	struct in_addr &	getAddrStruct(void);
 	in_addr_t &		getAddr(void);

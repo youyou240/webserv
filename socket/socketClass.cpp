@@ -8,10 +8,9 @@ Socket::Socket(void)
 		throw badExec();
 	if (fcntl(_sockfd, F_SETFL, O_NONBLOCK) == -1)
     		throw badExec();
-	if (bind(_sockfd, (struct sockaddr *)&_addr.getAddrStruct(), sizeof(struct sockaddr)) == -1)
+	if (bind(_sockfd, (struct sockaddr *)&_addr.getStruct(), sizeof(struct sockaddr)) == -1)
 		throw badExec();
 	_serv.getFD() = _sockfd;
-	_serv.getStructEvent().data.fd = _sockfd;
 	listen(_sockfd, 128);
 	_manager.add(&_serv);
 }
@@ -27,7 +26,6 @@ Socket::Socket(unsigned short int port)
 	if (bind(_sockfd, (struct sockaddr *)&_addr.getAddrStruct(), sizeof(struct sockaddr)) == -1)
 		throw badExec();
 	_serv.getFD() = _sockfd;
-	_serv.getStructEvent().data.fd = _sockfd;
 	listen(_sockfd, 128);
 	_manager.add(&_serv);
 }
@@ -46,21 +44,23 @@ Socket& Socket::operator=(Socket const & other)
 int		Socket::getSockfd(void) const {return(_sockfd);}
 Sockaddr&	Socket::getAddr(void) {return(_addr);}
 Epoll&		Socket::getEpoll(void) {return (_manager);}
+Server&		Socket::getServ(void) {return (_serv);}
 
 void Socket::run(void)
 {
 	std::cout << "Le socket sur le port " << ntohs(_addr.getPort()) << "est ouvert" << std::endl;
-
+	std::cout << *this;
 	while (true)
 	{
 		int num_events = _manager.wait();
 		for (int i = 0; i < num_events; ++i)
 		{
 			Arole *role = static_cast<Arole *>(_manager.getEvents()[i].data.ptr);
-			if (role != NULL)
+			if (role == NULL)
 				continue ;
 			role->handle_event(_manager);
 		}
+		std::cout << this->getServ();
 	}
 }
 	
@@ -72,6 +72,6 @@ void	Socket::closeAll(void)
 
 std::ostream &	operator<<(std::ostream & o, Socket & other)
 {
-	o << "sockFd=" << other.getSockfd() << std::endl << other.getAddr() << std::endl << other.getEpoll() << std::endl;
+	o << "sockFd=" << other.getSockfd() << std::endl << other.getAddr() << other.getEpoll() << std::endl << other.getServ() << std::endl;
 	return (o);
 }

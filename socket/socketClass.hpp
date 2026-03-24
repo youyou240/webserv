@@ -33,6 +33,7 @@ public:
 	int		getSockfd(void) const;
 	Sockaddr&	getAddr(void);
 	Epoll&		getEpoll(void);
+	Server&		getServ(void);
 
 	void		run(void);
 	void		closeAll(void);

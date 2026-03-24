@@ -9,6 +9,7 @@
 # include <string>
 # include <ctime>
 # include <unistd.h>
+# include <ostream>
 
 class Client;
 class Epoll;
@@ -54,6 +55,7 @@ public:
 	void		closeAll(Epoll &);
 };
 
+std::ostream &	operator<<(std::ostream & o, Server const & serv);
 
 class Client : public Arole {
 	

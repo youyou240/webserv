@@ -2,6 +2,7 @@
 #include <arpa/inet.h>
 #include <netinet/in.h>
 #include <strings.h>
+#include <sys/socket.h>
 
 Sockaddr::Sockaddr(void)
 {
@@ -32,6 +33,7 @@ Sockaddr& Sockaddr::operator=(Sockaddr & other)
 	return (*this);
 }
 
+struct sockaddr_in &	Sockaddr::getStruct(void) {return(_addr);}
 short unsigned int &	Sockaddr::getFamily(void) {return(_addr.sin_family);}
 unsigned short int &	Sockaddr::getPort(void) {return(_addr.sin_port);}
 struct in_addr &	Sockaddr::getAddrStruct(void) {return(_addr.sin_addr);}
@@ -39,7 +41,7 @@ in_addr_t &		Sockaddr::getAddr(void) {return(_addr.sin_addr.s_addr);}
 
 std::ostream &	operator<<(std::ostream & o, Sockaddr & addr)
 {
-	o << "Family=" << addr.getFamily() << "\tPort=" << addr.getPort() << "\tAdresse=" << inet_ntoa(addr.getAddrStruct()) << std::endl;
+	o << "Family=" << addr.getFamily() << "\tPort=" << ntohs(addr.getPort()) << "\tAdresse=" << inet_ntoa(addr.getAddrStruct()) << std::endl;
 	return (o);
 }
 

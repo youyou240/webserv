@@ -88,6 +88,6 @@ void	Epoll::del(Arole * role)
 
 std::ostream &	operator<<(std::ostream & o, Epoll & other)
 {
-	o << other.getFD();
+	o << "epollFD=" << other.getFD();
 	return (o);
 }
