@@ -1,0 +1,17 @@
+sys/types.h
+sys/stats.h
+sys/wait.h
+sys/socket.h
+sys/select.h
+sys/epoll.h
+
+arpa/inet.h
+
+unistd.h
+string.h
+netdb.h
+errno.h
+fcntl.h
+signal.h
+tcl.h
+dirent.h

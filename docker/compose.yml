@@ -1,0 +1,11 @@
+services:
+  myvim:
+    image: youyou240/webserv
+    container_name: webserv
+    stdin_open: true
+    tty: true
+    volumes: 
+      - /Users/shanvalma/Documents/42/webserv:/home/webserv
+      - /Users/shanvalma/.ssh:/root/.ssh:ro
+    ports:
+      - "80:80"
