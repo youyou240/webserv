@@ -1,29 +1,31 @@
 #include "socketClass.hpp"
 #include <sys/epoll.h>
 
-Socket::Socket(void) : _fdTable(500)
+Socket::Socket(void)
 {
 	_sockfd = socket(AF_INET, SOCK_STREAM, SOCK_NONBLOCK);
 	if (_sockfd == -1)
 		throw badExec();
-	if (bind(_sockfd, (struct sockaddr *)&_addr.getStruct(), sizeof(struct sockaddr)) == -1)
+	if (bind(_sockfd, (struct sockaddr *)&_addr.getAddrStruct(), sizeof(struct sockaddr)) == -1)
 		throw badExec();
 	_serv.getFD() = _sockfd;
 	_serv.getStructEvent().data.fd = _sockfd;
-	_manager.add(_serv);
+	listen(_sockfd, 128);
+	_manager.add(&_serv);
 }
 
-Socket::Socket(unsigned short int port) : _fdTable(500)
+Socket::Socket(unsigned short int port)
 {
 	_sockfd = socket(AF_INET, SOCK_STREAM, SOCK_NONBLOCK);
 	if (_sockfd == -1)
 		throw badExec();
 	_addr.getPort() = htons(port);
-	if (bind(_sockfd, (struct sockaddr *)&_addr.getStruct(), sizeof(struct sockaddr)) == -1)
+	if (bind(_sockfd, (struct sockaddr *)&_addr.getAddrStruct(), sizeof(struct sockaddr)) == -1)
 		throw badExec();
 	_serv.getFD() = _sockfd;
 	_serv.getStructEvent().data.fd = _sockfd;
-	_manager.add(_serv);
+	listen(_sockfd, 128);
+	_manager.add(&_serv);
 }
 
 Socket::Socket(Socket const & other) {(void)other;}
@@ -32,18 +34,13 @@ Socket::~Socket(void) {this->closeAll();}
 
 Socket& Socket::operator=(Socket const & other)
 {
-	if (*this == other)
+	if (this == &other)
 		return (*this);
-	this->closeAll();
-	_sockfd = other.getSockfd();
-	_addr = other.getAddr();
-	_manager = other.getManager();
-	return (*this);
 }
 
 int		Socket::getSockfd(void) const {return(_sockfd);}
-Sockaddr&	Socket::getAddr(void) const {return(_addr);}
-Epoll&		Socket::getManager(void) const {return (_manager);}
+Sockaddr&	Socket::getAddr(void) {return(_addr);}
+Epoll&		Socket::getEpoll(void) {return (_manager);}
 
 void Socket::run(void)
 {
@@ -70,6 +67,6 @@ void	Socket::closeAll(void)
 
 std::ostream &	operator<<(std::ostream & o, Socket const & other)
 {
-	o << "sockFd=" << other.getSockfd() << std::endl << other.getAddr() << std::endl << other.getManager() << std::endl;
+	o << "sockFd=" << other.getSockfd() << std::endl << other.getAddr() << std::endl << other.getEpoll() << std::endl;
 	return (o);
 }

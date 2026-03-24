@@ -55,20 +55,26 @@ int	Epoll::wait(void)
 	return (events);
 }
 
-void	Epoll::add(Arole & role)
+void	Epoll::add(Arole * role)
 {
-	if (epoll_ctl(_fd, EPOLL_CTL_ADD, role.getFD(), &role.getStructEvent()) == -1)
-		role.closeConnection(*this);
+	if (epoll_ctl(_fd, EPOLL_CTL_ADD, role->getFD(), &role->getStructEvent()) == -1)
+		role->closeConnection(*this);
 }
 
-int	Epoll::mod(Arole & role)
+int	Epoll::mod(Arole * role)
 {
-	if (epoll_ctl(_fd, EPOLL_CTL_MOD, role.getFD(), &role.getStructEvent()) == -1)
-		role.closeConnection(*this);
+	if (epoll_ctl(_fd, EPOLL_CTL_MOD, role->getFD(), &role->getStructEvent()) == -1)
+		role->closeConnection(*this);
 }
 
-int	Epoll::del(Arole & role)
+int	Epoll::del(Arole * role)
 {
-	if (epoll_ctl(_fd, EPOLL_CTL_DEL, role.getFD(), NULL) == -1)
-		role.closeConnection(*this);
+	if (epoll_ctl(_fd, EPOLL_CTL_DEL, role->getFD(), NULL) == -1)
+		role->closeConnection(*this);
+}
+
+std::ostream &	operator<<(std::ostream & o, Epoll const & other)
+{
+	o << other.getFD();
+	return (o);
 }

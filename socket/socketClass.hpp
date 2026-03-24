@@ -5,6 +5,7 @@
 # include <netinet/in.h>
 # include <arpa/inet.h>
 # include <ostream>
+# include <iostream>
 # include <exception>
 # include <cerrno>
 # include <unistd.h>
@@ -29,9 +30,9 @@ public:
 	~Socket(void);
 
 
-	int&		getSockfd(void) const;
-	Sockaddr&	getAddr(void) const;
-	Epoll&		getEpoll(void) const;
+	int		getSockfd(void) const;
+	Sockaddr&	getAddr(void);
+	Epoll&		getEpoll(void);
 
 	void		run(void);
 	void		closeAll(void);

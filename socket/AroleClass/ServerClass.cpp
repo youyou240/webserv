@@ -39,5 +39,5 @@ void	Server::handle_event(Epoll & manager)
 		return ;
 	Client	*client = new Client(fd);
 	fcntl(fd, F_SETFL, O_NONBLOCK);
-	manager.add(*newClient);
+	manager.add(client);
 }

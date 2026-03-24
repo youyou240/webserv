@@ -73,7 +73,7 @@ void	Client::handle_event(int event, Epoll & manager)
 		{
 			this->genResponse();
 			_ev.events = EPOLLOUT;
-			manager.mod(*this);
+			manager.mod(this);
 		}
 	}
 	else if (event & EPOLLOUT)
@@ -95,7 +95,7 @@ void	Client::handle_event(int event, Epoll & manager)
 			this->cleanResponse();
 			this->_lastActivity = time(NULL);
 			_ev.events = EPOLLIN;
-			manager.mod(*this);
+			manager.mod(this);
 		}
 	}
 }

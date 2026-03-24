@@ -5,10 +5,13 @@
 # include <exception>
 # include <vector>
 # include <string.h>
+# include <ostream>
 # include <cerrno>
 
 # define MAX_REQUEST	4096
 # define MIN_MAX	64
+
+class Arole;
 
 class Epoll {
 
@@ -29,13 +32,15 @@ public:
 	void	close(void);
 
 	int	wait(void);
-	int	add(int fd, struct epoll_event);
-	int	mod(int fd, struct epoll_event);
-	int	del(int fd, struct epoll_event);
+	void	add(Arole *);
+	void	mod(Arole *);
+	void	del(Arole *);
 
 	class epollError : public std::exception {
 		virtual const char * what() const throw() {
 			return (strerror(errno));
 		}
 	};
-}
+};
+
+std::ostream &	operator<<(std::ostream &, Epoll const &);
