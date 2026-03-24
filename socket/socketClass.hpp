@@ -4,13 +4,13 @@
 # include <sys/epoll.h>
 # include <netinet/in.h>
 # include <arpa/inet.h>
-# include <stream>
+# include <ostream>
 # include <exception>
 # include <cerrno>
 # include <unistd.h>
 # include <vector>
 # include <map>
-# include "socketaddrClass.hpp"
+# include "sockaddrClass.hpp"
 # include "AroleClass/AroleClass.hpp"
 
 class Socket {
@@ -19,24 +19,25 @@ class Socket {
 	Sockaddr			_addr;
 	Epoll				_manager;
 	Server				_serv;
-	std::vector<unsigned int>	_fdTable(500);
+
+	Socket(Socket const &);
+	Socket& operator=(Socket const &);
 
 public:
 	Socket(void);
 	Socket(unsigned short int port);
-	Socket(Socket const &);
 	~Socket(void);
 
-	Socket& operator=(Socket const &);
 
 	int&		getSockfd(void) const;
 	Sockaddr&	getAddr(void) const;
 	Epoll&		getEpoll(void) const;
-	
+
+	void		run(void);
 	void		closeAll(void);
 	
 	class badExec : public std::exception {
-		virtual char * const what() const throw() {return(strerror(errno));};
+		virtual const char * what() const throw() {return(strerror(errno));};
 	};
 
 };

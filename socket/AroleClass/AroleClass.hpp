@@ -15,7 +15,7 @@ class Arole {
 
 protected:
 	
-	static std::vector<Client &>	_activeClient;
+	static std::vector<Client *>	_activeClient;
 	static unsigned int		_client;
 	static unsigned int		_server;
 	
@@ -28,21 +28,16 @@ public:
 	Arole(int fd);
 	virtual ~Arole(void);
 	
-	virtual void	handle_event(int event, Epoll & manager) = 0;
+	virtual void	handle_event(Epoll & manager) = 0;
 
 	static void	launchActiveRoutine(void);
 
-	int&			getFD(void) const;
-	void			closeConnection(Epoll &);
-	struct epoll_event &	getStructEvent(void) const;
+	int&			getFD(void);
+	struct epoll_event &	getStructEvent(void);
 };
 
 
 class Server : public Arole {
-
-private:
-	unsigned int			_countID;
-	std::vector<unsigned int>	*_fdTable;
 
 public:
 	
@@ -50,9 +45,8 @@ public:
 	Server(int fd);
 	~Server(void);
 
-	virtual void	handle_event(int event, Epoll & manager);
+	virtual void	handle_event(Epoll & manager);
 	
-	void		setFdTable(std::vector<int> const & fdT);
 	unsigned int	getNbServer(void) const;
 	unsigned int	getNbClient(void) const;
 	void		closeAll(Epoll const &);
@@ -77,9 +71,11 @@ public:
 	Client(int fd);
 	~Client(void);
 	
-	virtual void	handle_event(int event, Epoll & manager);
+	virtual void	handle_event(Epoll & manager);
 
 	void	genResponse(void);
 	void	cleanRequest(void);
 	void	cleanResponse(void);
+	
+	void	closeConnection(Epoll &);
 };

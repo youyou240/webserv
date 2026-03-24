@@ -15,12 +15,13 @@ class Epoll {
 	int				_fd;
 	std::vector<struct epoll_event>	_events;
 
+	Epoll(Epoll const &);
+	Epoll & operator=(Epoll const &);
+
 public:
 	Epoll(void);
-	Epoll(Epoll const &);
 	~Epoll(void);
 
-	Epoll & operator=(Epoll const &);
 
 	int&					getFD(void) const;
 	std::vector<struct epoll_event>&	getEvents(void) const;

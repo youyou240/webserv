@@ -24,7 +24,7 @@ Epoll::~Epoll(void)
 Epoll & Epoll::operator=(Epoll const & other)
 {
 	_fd = other.getFD();
-	_fd = other.getEvents();
+	_events = other.getEvents();
 	return (*this);
 }
 
@@ -57,18 +57,18 @@ int	Epoll::wait(void)
 
 void	Epoll::add(Arole & role)
 {
-	if (epoll_ctl(_fd, EPOLL_CTL_ADD, role.getFD(), &role.getStructEvent()) == -1);
+	if (epoll_ctl(_fd, EPOLL_CTL_ADD, role.getFD(), &role.getStructEvent()) == -1)
 		role.closeConnection(*this);
 }
 
 int	Epoll::mod(Arole & role)
 {
-	if (epoll_ctl(_fd, EPOLL_CTL_MOD, role.getFD(), &role.getStructEvent()) == -1);
+	if (epoll_ctl(_fd, EPOLL_CTL_MOD, role.getFD(), &role.getStructEvent()) == -1)
 		role.closeConnection(*this);
 }
 
 int	Epoll::del(Arole & role)
 {
-	if (epoll_ctl(_fd, EPOLL_CTL_DEL, role.getFD(), NULL) == -1);
+	if (epoll_ctl(_fd, EPOLL_CTL_DEL, role.getFD(), NULL) == -1)
 		role.closeConnection(*this);
 }

@@ -21,6 +21,6 @@ public:
 	unsigned short int &	getPort(void) const;
 	struct in_addr &	getAddrStruct(void) const;
 	in_addr_t &		getAddr(void) const;
-}
+};
 
 std::ostream &	operator<<(std::ostream &, Sockaddr const &);

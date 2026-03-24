@@ -1,12 +1,15 @@
 # include "AroleClass.hpp"
+#include <sys/epoll.h>
 
-Client(int fd) : Arole(fd), _bytes_send(0), _complete(false), _lastActivity(time(NULL))
+Client::Client(int fd) : Arole(fd), _bytes_send(0), _complete(false), _lastActivity(time(NULL))
 {
 	this->_client += 1;
-	_activeClient.push_back(*this);
+	_activeClient.push_back(this);
+	_ev.events = EPOLLIN;
+	_ev.data.ptr = this;
 }
 
-~Client(void)
+Client::~Client(void)
 {
 	this->_client -= 1;
 	for(std::vector<Client &>::iterator it = _activeClient.begin(); it != _activeClient.end(); ++it) {
@@ -37,7 +40,7 @@ void	Client::genResponse(void)
 	else if (_request.find("style") != std::string::npos)
 		_response = "mec de cite simple";
 	else
-		_repone = "error 404 request=" + _request;
+		_respone = "error 404 request=" + _request;
 	_bytes_send = 0;
 	this->cleanRequest();
 }
@@ -70,13 +73,13 @@ void	Client::handle_event(int event, Epoll & manager)
 		{
 			this->genResponse();
 			_ev.events = EPOLLOUT;
-			_ev.data.ptr = this;
-			manager.mod(this->fd, &_ev);
+			manager.mod(*this);
 		}
 	}
 	else if (event & EPOLLOUT)
 	{
 		const char*	data_to_send = _response.c_str() + _bytes_send;
+		int 		bytes_left_to_send = _response.length() - _bytes_send;
 		int		bytes_sent_now = send(this->fd, data_to_send, bytes_left_to_send, 0);
 
 		if (bytes_sent_now == -1)
@@ -87,13 +90,19 @@ void	Client::handle_event(int event, Epoll & manager)
 			return ;
 		}
 		_bytes_send += bytes_sent_now;
-		if (_bytes_sent == _response.length())
+		if (_bytes_send == _response.length())
 		{
 			this->cleanResponse();
 			this->_lastActivity = time(NULL);
 			_ev.events = EPOLLIN;
-			_ev.data.ptr = this;
-			manager.mod(this->fd, &_ev);
+			manager.mod(*this);
 		}
 	}
+}
+
+void	Client::closeConnection(Epoll & manager)
+{
+	manager.del(*this);
+	close(this->_fd);
+	delete this;
 }

@@ -1,7 +1,7 @@
 #include "socketClass.hpp"
 #include <sys/epoll.h>
 
-Socket::Socket(void)
+Socket::Socket(void) : _fdTable(500)
 {
 	_sockfd = socket(AF_INET, SOCK_STREAM, SOCK_NONBLOCK);
 	if (_sockfd == -1)
@@ -10,11 +10,10 @@ Socket::Socket(void)
 		throw badExec();
 	_serv.getFD() = _sockfd;
 	_serv.getStructEvent().data.fd = _sockfd;
-	_serv.setFdTable(_fdTable);
-	_manager.add();
+	_manager.add(_serv);
 }
 
-Socket::Socket(unsigned short int port)
+Socket::Socket(unsigned short int port) : _fdTable(500)
 {
 	_sockfd = socket(AF_INET, SOCK_STREAM, SOCK_NONBLOCK);
 	if (_sockfd == -1)
@@ -24,9 +23,7 @@ Socket::Socket(unsigned short int port)
 		throw badExec();
 	_serv.getFD() = _sockfd;
 	_serv.getStructEvent().data.fd = _sockfd;
-	_serv.setFdTable(_fdTable);
-	_manager.add();
-	
+	_manager.add(_serv);
 }
 
 Socket::Socket(Socket const & other) {(void)other;}
@@ -47,6 +44,23 @@ Socket& Socket::operator=(Socket const & other)
 int		Socket::getSockfd(void) const {return(_sockfd);}
 Sockaddr&	Socket::getAddr(void) const {return(_addr);}
 Epoll&		Socket::getManager(void) const {return (_manager);}
+
+void Socket::run(void)
+{
+	std::cout << "Le socket sur le port " << ntohs(_addr.getPort()) << "est ouvert" << std::endl;
+
+	while (true)
+	{
+		int num_events = _manager.wait();
+		for (int i = 0; i < num_events; ++i)
+		{
+			Arole *role = static_cast<Arole *>(_manager.getEvents()[i].data.ptr);
+			if (role != NULL)
+				continue ;
+			role->handle_event(_manager);
+		}
+	}
+}
 	
 void	Socket::closeAll(void)
 {

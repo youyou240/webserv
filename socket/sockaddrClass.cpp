@@ -1,12 +1,13 @@
 # include "socketaddrClass.hpp"
 #include <arpa/inet.h>
+#include <netinet/in.h>
 #include <strings.h>
 
 Sockaddr::Sockaddr(void)
 {
 	_addr.sin_family = AF_INET;
 	_addr.sin_port = htons(0);
-	_addr.sin_addr.s_addr = htonl(INA_DRR);
+	_addr.sin_addr.s_addr = htonl(INADDR_ANY);
 	bzero(&(_addr.sin_zero), 8);
 }
 
