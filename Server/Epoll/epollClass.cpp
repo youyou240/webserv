@@ -1,5 +1,6 @@
 #include "epollClass.hpp"
 #include <sys/epoll.h>
+#include <unistd.h>
 
 Epoll::Epoll(void) : _events(MIN_MAX)
 {
@@ -41,7 +42,7 @@ void	Epoll::closeFD(void)
 
 int	Epoll::wait(void)
 {
-	int	events = epoll_wait(_fd, _events.data(), MIN_MAX, 60000);
+	int	events = epoll_wait(_fd, _events.data(), _events.size(), 60000);
 	if (events == -1)
 	{
 		if (errno == EINTR)

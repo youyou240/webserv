@@ -8,11 +8,21 @@ Socket::Socket(void) : _active(false)
 	if (_sockfd == -1)
 		throw badExec();
 	if (fcntl(_sockfd, F_SETFL, O_NONBLOCK) == -1)
+	{
+		close(_sockfd);
     		throw badExec();
+	}
 	if (bind(_sockfd, (struct sockaddr *)&_addr.getStruct(), sizeof(struct sockaddr)) == -1)
+	{
+		close(_sockfd);	
 		throw badExec();
+	}
 	_acceptor.setFD(_sockfd);
-	listen(_sockfd, 128);
+	if (listen(_sockfd, SOMAXCONN) == -1)
+	{
+		close(_sockfd);	
+		throw badExec();
+	}
 }
 
 Socket::Socket(unsigned short int port) : _active(false)
@@ -26,7 +36,11 @@ Socket::Socket(unsigned short int port) : _active(false)
 	if (bind(_sockfd, (struct sockaddr *)&_addr.getStruct(), sizeof(struct sockaddr)) == -1)
 		throw badExec();
 	_acceptor.setFD(_sockfd);
-	listen(_sockfd, 128);
+	if (listen(_sockfd, SOMAXCONN) == -1)
+	{
+		close(_sockfd);	
+		throw badExec();
+	}
 }
 
 Socket::Socket(Socket const & other) {(void)other;}

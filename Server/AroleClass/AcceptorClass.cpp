@@ -65,7 +65,10 @@ void	Acceptor::handle_event(Epoll & manager)
 		return ;
 	Client	*client = new Client(fd, this->_fd);
 	if (fcntl(fd, F_SETFL, O_NONBLOCK) == -1)
+	{
 		client->closeConnection(manager);
+		return ;
+	}
 	manager.add(client);
 }
 
