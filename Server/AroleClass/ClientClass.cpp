@@ -1,13 +1,13 @@
 # include "AroleClass.hpp"
 #include <sys/epoll.h>
 
-std::vector<Client *> Arole::_activeClient;
+std::map<int, std::map<int, Client *> > Arole::_activeClient;
 unsigned int Arole::_client = 0;
 
-Client::Client(int fd) : Arole(fd), _bytes_send(0), _complete(false), _lastActivity(time(NULL))
+Client::Client(int fd, int servfd) : Arole(fd), _acceptorfd(servfd), _bytes_send(0), _complete(false), _lastActivity(time(NULL))
 {
 	this->_client += 1;
-	_activeClient.push_back(this);
+	_activeClient[_acceptorfd].insert(std::pair<int, Client *>(_fd, this));
 	_ev.events = EPOLLIN;
 	_ev.data.ptr = this;
 }
@@ -15,16 +15,8 @@ Client::Client(int fd) : Arole(fd), _bytes_send(0), _complete(false), _lastActiv
 Client::~Client(void)
 {
 	this->_client -= 1;
-	for(std::vector<Client *>::iterator it = _activeClient.begin(); it != _activeClient.end(); ++it) {
-		if (*it == this)
-		{
-			_activeClient.erase(it);
-			break ;
-		}
-			
-	}
+	_activeClient[this->_acceptorfd].erase(this->_fd);
 }
-
 
 void	Client::cleanRequest(void)
 {
@@ -105,6 +97,13 @@ void	Client::handle_event(Epoll & manager)
 			manager.mod(this);
 		}
 	}
+}
+
+bool	Client::getInactiveTime(time_t now) const
+{
+	if ((now - _lastActivity) >= 60)
+		return true;
+	return false;
 }
 
 void	Client::closeConnection(Epoll & manager)

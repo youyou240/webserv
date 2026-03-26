@@ -1,11 +1,12 @@
 # pragma once
 
-# include "../epollClass.hpp"
+# include "../Epoll/epollClass.hpp"
 # include <sys/epoll.h>
 # include <sys/socket.h>
 # include <fcntl.h>
 # include <string.h>
 # include <vector>
+# include <map>
 # include <string>
 # include <ctime>
 # include <unistd.h>
@@ -17,10 +18,10 @@ class Epoll;
 class Arole {
 
 protected:
-	
-	static std::vector<Client *>	_activeClient;
-	static unsigned int		_client;
-	static unsigned int		_server;
+
+	static std::map<int, std::map<int, Client *> > _activeClient;;	
+	static unsigned int				_client;
+	static unsigned int				_acceptor;
 	
 	int			_fd;
 	struct epoll_event	_ev;
@@ -33,31 +34,40 @@ public:
 	
 	virtual void	handle_event(Epoll & manager) = 0;
 
-	static void	launchActiveRoutine(void);
+	static void		launchActiveRoutine(Epoll &);
+	static unsigned int	getAllClients(void);
+	static unsigned int	getAllAcceptators(void);
 
-	int&			getFD(void);
+	int			getFD(void) const;
 	struct epoll_event &	getStructEvent(void);
 };
 
 
-class Server : public Arole {
+class Acceptor : public Arole {
 
+	bool	_active;
 public:
 	
-	Server(void);
-	Server(int fd);
-	~Server(void);
+	Acceptor(void);
+	Acceptor(int fd);
+	~Acceptor(void);
 
 	virtual void	handle_event(Epoll & manager);
 	
-	unsigned int	getNbServer(void) const;
 	unsigned int	getNbClient(void) const;
+
+	void		setFD(int);
+
+	void		start(Epoll &);
+	void		stop(Epoll &);
 	void		closeAll(Epoll &);
 };
 
-std::ostream &	operator<<(std::ostream & o, Server const & serv);
+std::ostream &	operator<<(std::ostream & o,Acceptor  const & acceptor);
 
 class Client : public Arole {
+
+	int		_acceptorfd;
 	
 	std::string	_request;
 	std::string	_response;
@@ -72,7 +82,7 @@ class Client : public Arole {
 	
 public:
 
-	Client(int fd);
+	Client(int fd, int servfd);
 	~Client(void);
 	
 	virtual void	handle_event(Epoll & manager);
@@ -80,6 +90,8 @@ public:
 	void	genResponse(void);
 	void	cleanRequest(void);
 	void	cleanResponse(void);
+
+	bool	getInactiveTime(time_t) const;
 	
 	void	closeConnection(Epoll &);
 };

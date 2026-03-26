@@ -4,12 +4,13 @@ NAME = Webserv
 
 CPPFLAGS = -Wall -Wextra -Werror -g3 -std=c++98
 
-SRCS = main.cpp socket/socketClass.cpp \
-       		socket/epollClass.cpp	\
-		socket/sockaddrClass.cpp \
-		socket/AroleClass/AroleClass.cpp \
-		socket/AroleClass/ClientClass.cpp \
-		socket/AroleClass/ServerClass.cpp \
+SRCS = main.cpp Server/ServerClass.cpp	\
+		Server/socket/socketClass.cpp \
+		Server/socket/sockaddrClass.cpp \
+		Server/Epoll/epollClass.cpp	\
+		Server/AroleClass/AroleClass.cpp \
+		Server/AroleClass/ClientClass.cpp \
+		Server/AroleClass/AcceptorClass.cpp \
  
 OBJS = $(SRCS:%.cpp=%.o)
 

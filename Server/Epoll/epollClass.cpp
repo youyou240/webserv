@@ -26,12 +26,12 @@ Epoll & Epoll::operator=(Epoll const & other)
 	return (*this);
 }
 
-int&	Epoll::getFD(void)
+int	Epoll::getFD(void) const
 {
 	return (this->_fd);
 }
 
-std::vector<struct epoll_event>&	Epoll::getEvents(void)
+std::vector<struct epoll_event>&	Epoll::getEvents(void) const
 {
 	return (this->_events);
 }
@@ -43,7 +43,7 @@ void	Epoll::closeFD(void)
 
 int	Epoll::wait(void)
 {
-	int	events = epoll_wait(_fd, _events.data(), MIN_MAX, -1);
+	int	events = epoll_wait(_fd, _events.data(), MIN_MAX, 60000);
 	if (events == -1)
 	{
 		if (errno == EINTR)
@@ -86,8 +86,8 @@ void	Epoll::del(Arole * role)
 	}
 }
 
-std::ostream &	operator<<(std::ostream & o, Epoll & other)
+std::ostream &	operator<<(std::ostream & o, Epoll const & other)
 {
-	o << "epollFD=" << other.getFD();
+	o << other.getFD();
 	return (o);
 }

@@ -1,6 +1,6 @@
 # pragma once
 
-# include "AroleClass/AroleClass.hpp"
+# include "../AroleClass/AroleClass.hpp"
 # include <sys/epoll.h>
 # include <exception>
 # include <vector>
@@ -27,8 +27,8 @@ public:
 	~Epoll(void);
 
 
-	int&					getFD(void);
-	std::vector<struct epoll_event>&	getEvents(void);
+	int					getFD(void) const;
+	std::vector<struct epoll_event>&	getEvents(void) const;
 
 	void	closeFD(void);
 
@@ -44,4 +44,4 @@ public:
 	};
 };
 
-std::ostream &	operator<<(std::ostream &, Epoll &);
+std::ostream &	operator<<(std::ostream &, Epoll const &);

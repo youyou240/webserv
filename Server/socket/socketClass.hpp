@@ -9,17 +9,17 @@
 # include <exception>
 # include <cerrno>
 # include <unistd.h>
-# include <vector>
 # include <map>
 # include "sockaddrClass.hpp"
-# include "AroleClass/AroleClass.hpp"
+# include "../AroleClass/AroleClass.hpp"
 
 class Socket {
 
-	int				_sockfd;
-	Sockaddr			_addr;
-	Epoll				_manager;
-	Server				_serv;
+	int		_sockfd;
+	Sockaddr	_addr;
+	Acceptor	_acceptor;
+
+	bool		_active;
 
 	Socket(Socket const &);
 	Socket& operator=(Socket const &);
@@ -30,13 +30,15 @@ public:
 	~Socket(void);
 
 
-	int		getSockfd(void) const;
-	Sockaddr&	getAddr(void);
-	Epoll&		getEpoll(void);
-	Server&		getServ(void);
+	int			getSockfd(void) const;
+	Sockaddr const &	getAddr(void) const;
+	Acceptor const &	getAcceptor(void) const;
+	bool			getActiveStatus(void) const;
+	
+	void 		start(Epoll &);
+	void 		stop(Epoll &);
 
-	void		run(void);
-	void		closeAll(void);
+	void		closeAll(Epoll &);
 	
 	class badExec : public std::exception {
 		virtual const char * what() const throw() {return(strerror(errno));};
@@ -44,4 +46,4 @@ public:
 
 };
 
-std::ostream &	operator<<(std::ostream &, Socket &);
+std::ostream &	operator<<(std::ostream &, Socket const &);
