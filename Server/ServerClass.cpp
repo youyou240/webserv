@@ -60,6 +60,7 @@ void	Server::run(void)
 			role->handle_event(_epoll);
 		}
 		Arole::launchActiveRoutine(_epoll);
+		activeSocketDebug();
 	}
 }
 
@@ -98,6 +99,15 @@ void	Server::exit(unsigned short int port)
 {
 	_sockets[port]->closeAll(_epoll);
 	_sockets.erase(port);
+}
+
+void	Server::activeSocketDebug(void) const
+{
+	for (std::map<unsigned short int, Socket *>::const_iterator it = _sockets.begin(); it != _sockets.end(); ++it)
+	{
+		if (it->second->getActiveStatus())
+			std::cout << *(it->second) << std::endl;
+	}
 }
 
 std::ostream &	operator<<(std::ostream & o, Server const &serv)

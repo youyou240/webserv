@@ -29,6 +29,8 @@ public:
 	void	stop(unsigned short int);
 	void	exit(unsigned short int);
 
+	void	activeSocketDebug(void) const;
+
 	class toMuchSocket : public std::exception {
 		virtual const char * what() const throw() {
 			return ("The number of socket per server need to be between 0 (out) and 10 (in)");

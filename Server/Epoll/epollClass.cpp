@@ -1,6 +1,4 @@
 #include "epollClass.hpp"
-#include "AroleClass/AroleClass.hpp"
-#include <asm-generic/errno-base.h>
 #include <sys/epoll.h>
 
 Epoll::Epoll(void) : _events(MIN_MAX)
@@ -31,7 +29,7 @@ int	Epoll::getFD(void) const
 	return (this->_fd);
 }
 
-std::vector<struct epoll_event>&	Epoll::getEvents(void) const
+std::vector<struct epoll_event> const &	Epoll::getEvents(void) const
 {
 	return (this->_events);
 }

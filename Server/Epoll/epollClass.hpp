@@ -28,7 +28,7 @@ public:
 
 
 	int					getFD(void) const;
-	std::vector<struct epoll_event>&	getEvents(void) const;
+	std::vector<struct epoll_event> const &	getEvents(void) const;
 
 	void	closeFD(void);
 
