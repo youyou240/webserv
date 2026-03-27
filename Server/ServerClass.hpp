@@ -4,6 +4,9 @@
 # include "AroleClass/AroleClass.hpp"
 # include "Epoll/epollClass.hpp"
 # include <vector>
+# include <csignal>
+# include <cstdlib>
+
 
 class Server {
 
@@ -11,9 +14,18 @@ class Server {
 
 	Epoll					_epoll;
 
+	int					_active;
 	Server(Server const &);
 	Server& operator=(Server const &);
 	
+	void	start(void);
+	void	start(unsigned short int);
+	void	stop(void);
+	void	stop(unsigned short int);
+	void	exit(unsigned short int);
+	
+	void		sigManager(void);
+
 public:
 	Server(void);
 	Server(int, std::vector<unsigned short int> &);
@@ -21,15 +33,14 @@ public:
 
 	size_t		getOpenSocket(void) const;
 	Epoll const &	getEpoll(void) const;
+	int		getIsActive(void) const;
 
 	void	run(void);
-	void	start(void);
-	void	start(unsigned short int);
-	void	stop(void);
-	void	stop(unsigned short int);
-	void	exit(unsigned short int);
 
+	void	allSocketDebug(void) const;
 	void	activeSocketDebug(void) const;
+
+	static void	handleSigEvent(int signum);
 
 	class toMuchSocket : public std::exception {
 		virtual const char * what() const throw() {

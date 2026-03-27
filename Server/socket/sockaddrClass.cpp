@@ -43,7 +43,7 @@ void			Sockaddr::setPort(unsigned short int Hport) {_addr.sin_port = htons(Hport
 
 std::ostream &	operator<<(std::ostream & o, Sockaddr const & addr)
 {
-	o << "Family=" << addr.getFamily() << "\tPort=" << ntohs(addr.getPort()) << "\tAdresse=" << inet_ntoa(addr.getAddrStruct()) << std::endl;
+	o << "Family=" << addr.getFamily() << "\tPort=" << ntohs(addr.getPort()) << "\tAdresse=" << inet_ntoa(addr.getAddrStruct());
 	return (o);
 }
 

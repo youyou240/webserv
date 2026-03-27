@@ -70,13 +70,13 @@ void 		Socket::stop(Epoll & manager)
 {
 	_acceptor.stop(manager);
 	_active = false;
-	std::cout << "Le socket sur le port " << ntohs(_addr.getPort()) << " est ferme !";
+	std::cout << "Le socket sur le port " << ntohs(_addr.getPort()) << " est ferme !" << std::endl;
 }
 
 void		Socket::closeAll(Epoll & manager) {_acceptor.closeAll(manager);}
 
 std::ostream &	operator<<(std::ostream & o, Socket const & other)
 {
-	o << other.getAddr() << std::endl << other.getAcceptor() << std::endl;
+	o << other.getAddr() << "\t" << other.getAcceptor();
 	return (o);
 }
