@@ -38,15 +38,6 @@ void		Acceptor::start(Epoll & manager)
 	this->_active = true;
 }
 
-void		Acceptor::stop(Epoll & manager)
-{
-	std::map<int, Client *> servClient = _activeClient[this->_fd];
-	for (std::map<int, Client *>::iterator it = servClient.begin(); it != servClient.end(); ++it)
-		it->second->closeConnection(manager);
-	manager.del(this);
-	this->_active = false;
-}
-
 void		Acceptor::closeAll(Epoll & manager)
 {
 	std::map<int, Client *> servClient = _activeClient[this->_fd];

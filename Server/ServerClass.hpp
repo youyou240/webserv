@@ -18,11 +18,8 @@ class Server {
 	Server(Server const &);
 	Server& operator=(Server const &);
 	
-	void	start(void);
 	void	start(unsigned short int);
-	void	stop(void);
 	void	stop(unsigned short int);
-	void	exit(unsigned short int);
 	
 	void		sigManager(void);
 
@@ -38,7 +35,6 @@ public:
 	void	run(void);
 
 	void	allSocketDebug(void) const;
-	void	activeSocketDebug(void) const;
 
 	static void	handleSigEvent(int signum);
 

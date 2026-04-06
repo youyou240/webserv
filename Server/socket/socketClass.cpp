@@ -1,9 +1,12 @@
 #include "socketClass.hpp"
 #include <netinet/in.h>
 #include <sys/epoll.h>
+#include <sys/socket.h>
 
 Socket::Socket(void) : _active(false)
 {
+	socklen_t len = sizeof(sockaddr);
+
 	_sockfd = socket(AF_INET, SOCK_STREAM, 0);
 	if (_sockfd == -1)
 		throw badExec();
@@ -17,6 +20,11 @@ Socket::Socket(void) : _active(false)
 		close(_sockfd);	
 		throw badExec();
 	}
+	if (getsockname(_sockfd, (struct sockaddr *)&_addr.getStruct(), &len) == -1)
+	{
+		close(_sockfd);	
+		throw badExec();
+	}
 	_acceptor.setFD(_sockfd);
 	if (listen(_sockfd, SOMAXCONN) == -1)
 	{
@@ -25,8 +33,9 @@ Socket::Socket(void) : _active(false)
 	}
 }
 
-Socket::Socket(unsigned short int port) : _active(false)
+Socket::Socket(unsigned short int port)
 {
+	_active = false;
 	_sockfd = socket(AF_INET, SOCK_STREAM, 0);
 	if (_sockfd == -1)
 		throw badExec();
@@ -38,7 +47,7 @@ Socket::Socket(unsigned short int port) : _active(false)
 	_acceptor.setFD(_sockfd);
 	if (listen(_sockfd, SOMAXCONN) == -1)
 	{
-		close(_sockfd);	
+		close(_sockfd);
 		throw badExec();
 	}
 }
@@ -68,12 +77,10 @@ void 		Socket::start(Epoll & manager)
 
 void 		Socket::stop(Epoll & manager)
 {
-	_acceptor.stop(manager);
+	_acceptor.closeAll(manager);
 	_active = false;
 	std::cout << "Le socket sur le port " << ntohs(_addr.getPort()) << " est ferme !" << std::endl;
 }
-
-void		Socket::closeAll(Epoll & manager) {_acceptor.closeAll(manager);}
 
 std::ostream &	operator<<(std::ostream & o, Socket const & other)
 {

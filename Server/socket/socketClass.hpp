@@ -28,8 +28,7 @@ public:
 	Socket(void);
 	Socket(unsigned short int port);
 	~Socket(void);
-
-
+	
 	int			getSockfd(void) const;
 	Sockaddr const &	getAddr(void) const;
 	Acceptor const &	getAcceptor(void) const;
@@ -38,8 +37,6 @@ public:
 	void 		start(Epoll &);
 	void 		stop(Epoll &);
 
-	void		closeAll(Epoll &);
-	
 	class badExec : public std::exception {
 		virtual const char * what() const throw() {return(strerror(errno));};
 	};

@@ -59,7 +59,6 @@ public:
 	void		setFD(int);
 
 	void		start(Epoll &);
-	void		stop(Epoll &);
 	void		closeAll(Epoll &);
 };
 
