@@ -1,232 +1,556 @@
-# Architecture du serveur — le cœur (Reactor pattern)
+# Le cœur du serveur — l'histoire d'une requête
 
-> Document de référence pour comprendre **comment le serveur fonctionne en interne**, avant de réviser pour l'évaluation.
-> Il décrit la boucle événementielle (le « moteur »). Les features HTTP (parsing, méthodes, CGI…) viennent **par-dessus** ce moteur, sans le modifier.
-
----
-
-## 1. Le problème à résoudre
-
-Le sujet impose des contraintes très précises (cf. `CLAUDE.md` §0) :
-
-- **Un seul** `poll()`/`epoll`/`select`/`kqueue` pour **toutes** les I/O (sockets d'écoute + clients).
-- **Jamais** de `read`/`recv`/`write`/`send` sur un socket sans que le multiplexeur ait dit « ce FD est prêt ».
-- Tous les FD socket en **non-bloquant**.
-- **Interdit de regarder `errno`** après un `read`/`write`.
-- Le serveur ne doit **jamais** hang, et rester dispo même sous charge.
-
-La réponse classique à ce genre de contrainte est un **Reactor pattern**.
+> Ce document raconte, pas à pas, **ce qui se passe vraiment** quand notre serveur démarre et qu'un client s'y connecte.
+> Pas besoin de connaissances préalables : on suit le code dans l'ordre où il s'exécute, on cite à chaque fois le fichier où ça se passe, et on s'arrête sur les passages importants.
+> Tout ce qui est décrit ici est **la fondation** du serveur : ça ne bougera plus. Les features HTTP viendront se poser dessus, on en parle à la fin.
 
 ---
 
-## 2. Le Reactor pattern en une phrase
+## Les personnages de l'histoire
 
-> Un **seul** thread, **un seul** point d'attente (`epoll_wait`). On dort jusqu'à ce qu'un ou plusieurs FD soient « prêts », puis pour chaque FD prêt on appelle **le bon gestionnaire d'événement** (handler). Pas de blocage, pas de threads, pas de busy-loop.
+Avant de lever le rideau, présentons les acteurs. Ils sont peu nombreux, et c'est voulu.
 
-Les trois rôles du pattern, et leur incarnation chez nous :
+- **`Epoll`** *(Epoll/epollClass.cpp)* — le chef d'orchestre. Il y en a **un seul** dans tout le programme. C'est lui qui attend que quelque chose se passe et qui prévient le bon acteur.
+- **`Arole`** *(Server/AroleClass/AroleClass.cpp)* — une **classe abstraite**. Elle dit : « tout objet surveillé par `Epoll` doit savoir réagir à son propre événement ». Elle ne sait pas *comment*, elle impose juste le contrat.
+- **`Acceptor`** *(Server/AroleClass/AcceptorClass.cpp)* — un `Arole` concret. Sa seule mission : **accepter les nouvelles connexions** sur un port.
+- **`Client`** *(Server/AroleClass/ClientClass.cpp)* — un autre `Arole` concret. Il représente **un visiteur connecté** : il lit ce qu'on lui envoie, il répond, puis il s'en va.
+- **`Socket`** *(Server/socket/socketClass.cpp)* et **`Server`** *(Server/ServerClass.cpp)* — la logistique : ouvrir les ports, en gérer plusieurs.
 
-| Rôle du pattern | Notre classe | Fichier |
-|---|---|---|
-| **Reactor / Dispatcher** (attend les events et les distribue) | `Epoll` | `Epoll/epollClass.{hpp,cpp}` |
-| **EventHandler** (interface abstraite « je sais traiter mon event ») | `Arole` | `Server/AroleClass/AroleClass.*` |
-| **Handler concret** : accepte les connexions | `Acceptor` | `Server/AroleClass/AcceptorClass.cpp` |
-| **Handler concret** : gère un client connecté | `Client` | `Server/AroleClass/ClientClass.cpp` |
+Retenez surtout cette phrase, tout le reste en découle :
 
-Autour, des classes « support » :
-
-| Classe | Rôle | Fichier |
-|---|---|---|
-| `Socket` | Crée/configure un socket d'écoute (`socket`/`bind`/`listen`) et possède son `Acceptor` | `Server/socket/socketClass.cpp` |
-| `Sockaddr` | Wrapper C++ autour de `struct sockaddr_in` | `Server/socket/sockaddrClass.cpp` |
-| `Server` | Regroupe plusieurs `Socket` (multi-port) | `Server/ServerClass.cpp` |
+> **`Acceptor` et `Client` sont tous les deux des `Arole`.** Donc `Epoll` peut les traiter de la même manière, sans savoir lequel est lequel.
 
 ---
 
-## 3. L'idée clé : « polymorphisme via `data.ptr` »
+## Acte 1 — Le serveur s'éveille
 
-Quand on enregistre un FD dans epoll, on remplit un `struct epoll_event` :
+Tout commence dans `main.cpp`. Quatre lignes suffisent à donner vie au serveur :
 
 ```cpp
-_ev.events   = EPOLLIN;   // ce qu'on veut surveiller
-_ev.data.ptr = this;      // ← on stocke le pointeur vers le handler (Arole*)
+Epoll & epoll = Epoll::createEpoll();
+Server *serv = new Server(nbPort, ports, epoll);
+std::signal(SIGINT, epoll.handleSigEvent);
+epoll.addServer(serv);
+epoll.run();
 ```
 
-epoll **nous redonne ce pointeur** quand le FD devient prêt. Donc, dans la boucle, on n'a pas besoin de savoir si un FD est un socket d'écoute ou un client : on récupère le `Arole*` et on appelle sa méthode virtuelle :
+Suivons-les une par une.
+
+### `Epoll::createEpoll()` — naître une seule fois
+
+```cpp
+Epoll& Epoll::createEpoll(void)
+{
+    static Epoll epoll;
+    return epoll;
+}
+```
+
+*(Epoll/epollClass.cpp)*
+
+Le mot-clé `static` ici est malin : la variable `epoll` n'est créée **qu'une seule fois**, à la première entrée dans la fonction. Tous les appels suivants renvoient le **même** objet. C'est notre garantie qu'il n'existe **qu'un seul `Epoll`** — exactement ce que le sujet exige (« un seul `poll()` pour toutes les I/O »).
+
+À sa naissance, l'`Epoll` demande au noyau de lui créer son instance de surveillance :
+
+```cpp
+Epoll::Epoll(void) : _events(MIN_MAX), _active(1)
+{
+    _fd = epoll_create(1);
+    if (_fd == -1)
+        throw epollError();
+}
+```
+
+*(Epoll/epollClass.cpp)*
+
+`epoll_create` renvoie un **descripteur de fichier** (`_fd`) qui représente « la liste des choses que je surveille ». `_events` est un tableau qui servira de boîte aux lettres : c'est là que le noyau déposera les événements quand il y en aura.
+
+### `new Server(...)` — ouvrir les portes
+
+Le `Server` crée les sockets d'écoute. Pour chaque port demandé, un `Socket` est construit, et c'est dans son constructeur que se joue toute la mécanique réseau classique :
+
+```cpp
+Socket::Socket(unsigned short int port)
+{
+    _sockfd = socket(AF_INET, SOCK_STREAM, 0);
+    if (_sockfd == -1)
+        throw badExec();
+    if (fcntl(_sockfd, F_SETFL, O_NONBLOCK) == -1)
+        throw badExec();
+    _addr.setPort(port);
+    if (bind(_sockfd, (struct sockaddr *)&_addr.getStruct(), sizeof(struct sockaddr)) == -1)
+        throw badExec();
+    _acceptor.setFD(_sockfd);
+    if (listen(_sockfd, SOMAXCONN) == -1)
+    {
+        close(_sockfd);
+        throw badExec();
+    }
+}
+```
+
+*(Server/socket/socketClass.cpp)*
+
+C'est la séquence fondatrice de tout serveur réseau :
+
+1. **`socket()`** — « donne-moi une prise réseau ». On récupère un FD.
+2. **`fcntl(..., O_NONBLOCK)`** — on la rend **non-bloquante**. C'est capital : sans ça, un `recv` pourrait figer tout le serveur en attendant des données. Avec ça, les appels rendent la main immédiatement.
+3. **`bind()`** — « cette prise écoutera sur ce port ».
+4. **`listen()`** — « accepte les connexions entrantes ». Le port est maintenant ouvert.
+
+Notez `_acceptor.setFD(_sockfd)` : le `Socket` confie le FD d'écoute à son `Acceptor`, qui sera chargé de tout ce qui arrive dessus.
+
+### `epoll.run()` — entrer dans la danse
+
+Le serveur est armé, les ports sont ouverts. Mais personne ne surveille encore rien. C'est le rôle de `run()`. On y arrive à l'acte suivant — mais avant, il faut que les `Acceptor` se signalent à l'`Epoll`. Ça se fait via `Socket::start` :
+
+```cpp
+void Socket::start(Epoll & manager)
+{
+    _acceptor.start(manager);
+    ...
+}
+```
+
+```cpp
+void Acceptor::start(Epoll & manager)
+{
+    manager.add(this);
+    this->_active = true;
+}
+```
+
+*(Server/socket/socketClass.cpp et Server/AroleClass/AcceptorClass.cpp)*
+
+`manager.add(this)` : l'`Acceptor` dit à l'`Epoll` **« surveille-moi »**. Et c'est ici qu'on rencontre l'astuce centrale de tout le projet.
+
+---
+
+## Acte 2 — L'astuce qui fait tout tenir : `data.ptr`
+
+Quand un `Acceptor` se construit, il prépare une petite carte d'identité :
+
+```cpp
+Acceptor::Acceptor(void) : Arole(), _active(false)
+{
+    this->_acceptor += 1;
+    this->_ev.events = EPOLLIN;
+    this->_ev.data.ptr = this;
+}
+```
+
+*(Server/AroleClass/AcceptorClass.cpp)*
+
+Deux champs à comprendre dans ce `_ev` (un `struct epoll_event`) :
+
+- **`_ev.events = EPOLLIN`** : « je veux être prévenu quand il y a quelque chose à **lire** » (pour un acceptor, « à lire » = « une connexion attend »).
+- **`_ev.data.ptr = this`** : « et quand tu me préviens, redonne-moi **ce pointeur** ». Ce pointeur, c'est l'objet lui-même.
+
+Quand `manager.add(this)` est appelé, voici ce qui part vers le noyau :
+
+```cpp
+void Epoll::add(Arole * role)
+{
+    Client *conv;
+    if (epoll_ctl(_fd, EPOLL_CTL_ADD, role->getFD(), &role->getStructEvent()) == -1)
+    {
+        if ((conv = dynamic_cast<Client *> (role)))
+            conv->closeConnection(*this);
+    }
+}
+```
+
+*(Epoll/epollClass.cpp)*
+
+`epoll_ctl(..., EPOLL_CTL_ADD, ...)` enregistre le FD **et** sa carte d'identité (`_ev`, qui contient le `this`). Le noyau va maintenant garder un œil dessus, et il a mémorisé notre pointeur.
+
+**Pourquoi c'est génial ?** Parce que le jour où ce FD devient prêt, le noyau nous rendra ce pointeur. On n'aura pas à se demander « est-ce un acceptor ou un client ? ». On récupérera un `Arole *`, on appellera sa méthode, et le polymorphisme C++ fera le bon choix tout seul. On le voit à l'acte suivant.
+
+---
+
+## Acte 3 — Le grand sommeil, et le réveil
+
+Voici le cœur battant du serveur, la boucle d'événements :
+
+```cpp
+void Epoll::run(void)
+{
+    std::cout << *this << std::endl;
+    while (this->_active)
+    {
+        if (isRunning)
+        {
+            int num_events = wait();
+            for (int i = 0; i < num_events; ++i)
+            {
+                Arole *role = static_cast<Arole *>(_events[i].data.ptr);
+                if (role == NULL)
+                    continue ;
+                role->handle_event(*this, _events[i].events);
+            }
+            Arole::launchActiveRoutine(*this);
+            show();
+        }
+        else
+            sigManager();
+    }
+}
+```
+
+*(Epoll/epollClass.cpp)*
+
+Décortiquons le moment le plus important : `wait()`.
+
+```cpp
+int Epoll::wait(void)
+{
+    int events = epoll_wait(_fd, _events.data(), _events.size(), 60000);
+    if (events == -1)
+    {
+        if (errno == EINTR)
+            return (0);
+        throw epollError();
+    }
+    return (events);
+}
+```
+
+*(Epoll/epollClass.cpp)*
+
+`epoll_wait` est **le seul endroit où le programme dort**. Il dit au noyau : « réveille-moi seulement quand au moins un de mes FD surveillés a quelque chose à faire — ou au bout de 60 secondes (60000 ms), même s'il ne se passe rien ». Tant que le serveur est inactif, il ne consomme **aucun** CPU : il attend.
+
+Pourquoi ce timeout de 60 s alors qu'on pourrait attendre indéfiniment ? Parce qu'on veut **périodiquement vérifier les connexions trop vieilles** (on y revient à l'acte 6). Le serveur ne reste donc jamais bloqué pour toujours, même sans trafic.
+
+Quand `epoll_wait` revient, `_events` contient les FD prêts. La boucle les parcourt et, pour chacun :
 
 ```cpp
 Arole *role = static_cast<Arole *>(_events[i].data.ptr);
-role->handle_event(*this, _events[i].events);   // dispatch O(1), polymorphe
+role->handle_event(*this, _events[i].events);
 ```
 
-`Acceptor` et `Client` redéfinissent chacun `handle_event`. **C'est tout le secret du dispatch.** Ajouter un nouveau type de FD (ex : un pipe de CGI) = créer une nouvelle sous-classe de `Arole`, sans toucher à `Epoll`.
+On récupère le `this` qu'on avait confié au noyau (acte 2), on le voit comme un `Arole *`, et on appelle `handle_event`. Si c'était un `Acceptor`, c'est `Acceptor::handle_event` qui s'exécute ; si c'était un `Client`, c'est `Client::handle_event`. **Magie du polymorphisme** : un seul appel, deux comportements, zéro `if` pour distinguer les types.
+
+Et on passe `_events[i].events` en deuxième argument. **Souvenez-vous de ce détail**, c'est tout l'objet de l'acte 5.
 
 ---
 
-## 4. La boucle événementielle (`Epoll::run`)
+## Acte 4 — Un visiteur frappe à la porte
 
-```
-while (_active)                      // _active = le serveur tourne
-  if (isRunning)                     // isRunning = pas en pause (cf. signaux §8)
-      n = epoll_wait(...)            // ← LE SEUL point d'attente de tout le programme
-      pour chaque FD prêt i :
-          role = _events[i].data.ptr
-          role->handle_event(*this, _events[i].events)
-      Arole::launchActiveRoutine()   // balaie les clients en timeout
-      show()                         // debug
-  else
-      sigManager()                   // menu interactif quand on a fait Ctrl-C
+Un client se connecte sur le port. Le noyau réveille `epoll_wait`, qui rend l'`Acceptor` comme prêt en lecture. La boucle appelle donc :
+
+```cpp
+void Acceptor::handle_event(Epoll & manager, uint32_t)
+{
+    int fd = accept(_fd, NULL, NULL);
+    if (fd == -1)
+        return ;
+    Client *client = new Client(fd, this->_fd);
+    if (fcntl(fd, F_SETFL, O_NONBLOCK) == -1)
+    {
+        client->closeConnection(manager);
+        return ;
+    }
+    manager.add(client);
+}
 ```
 
-- `epoll_wait` a un **timeout de 60 s** : même sans activité réseau, on se réveille pour vérifier les timeouts clients → le serveur ne reste jamais bloqué indéfiniment.
-- `EINTR` (réveil par un signal) est géré dans `Epoll::wait` : on retourne `0` au lieu de planter.
+*(Server/AroleClass/AcceptorClass.cpp)*
+
+Étape par étape :
+
+1. **`accept()`** prend la connexion en attente et renvoie un **nouveau FD**, dédié à ce client précis (le FD d'écoute, lui, continue d'écouter les suivants).
+2. On crée un **`Client`** pour ce FD.
+3. On rend ce FD **non-bloquant** (`O_NONBLOCK`), pour les mêmes raisons que pour le socket d'écoute.
+4. **`manager.add(client)`** : on demande à l'`Epoll` de surveiller ce client aussi.
+
+À la construction du `Client`, il s'enregistre lui-même et prépare sa carte d'identité, comme l'acceptor :
+
+```cpp
+Client::Client(int fd, int servfd)
+    : Arole(fd), _acceptorfd(servfd), _bytes_send(0),
+      _complete(false), _lastActivity(time(NULL))
+{
+    this->_client += 1;
+    _activeClient[_acceptorfd].insert(std::pair<int, Client *>(_fd, this));
+    _ev.events = EPOLLIN;
+    _ev.data.ptr = this;
+}
+```
+
+*(Server/AroleClass/ClientClass.cpp)*
+
+`_ev.events = EPOLLIN` : pour l'instant, ce client nous intéresse **en lecture** (on attend qu'il nous parle). `_ev.data.ptr = this` : encore notre carte d'identité. Et `_lastActivity = time(NULL)` enregistre l'heure de naissance — on s'en servira pour les timeouts.
+
+À partir de maintenant, l'`Epoll` surveille deux choses : l'acceptor (pour les prochains visiteurs) **et** ce client.
 
 ---
 
-## 5. Distinction CRUCIALE : masque d'intérêt vs events prêts
+## Acte 5 — Le client parle, et le piège qu'on évite
 
-C'est **le** point que l'évaluation peut tester, et la source d'erreur la plus fréquente. Il y a **deux** champs `.events` différents :
-
-| | Qui le remplit | Signification | Où |
-|---|---|---|---|
-| **Masque d'intérêt** | **nous** | « préviens-moi pour EPOLLIN » | `_ev.events` (membre de notre objet) |
-| **Events prêts** | **le noyau** | « voilà ce qui vient de se produire » | `_events[i].events` (rempli par `epoll_wait`) |
-
-➡️ **Un handler doit toujours réagir à ce qui est PRÊT (`_events[i].events`), jamais à ce qui l'INTÉRESSE (`_ev.events`).**
-
-C'est pour ça que `handle_event` reçoit `uint32_t events` en paramètre : on lui descend le masque prêt depuis la boucle. Et le noyau peut nous rendre des bits qu'on n'a jamais demandés : **`EPOLLERR` et `EPOLLHUP`** (erreur / déconnexion). On les teste **en premier**.
+Le client envoie sa requête. `epoll_wait` se réveille, rend ce client comme prêt en lecture, et la boucle appelle `Client::handle_event` :
 
 ```cpp
 void Client::handle_event(Epoll & manager, uint32_t events)
 {
-    if (events & (EPOLLERR | EPOLLHUP)) { closeConnection(manager); return ; }
-    if (events & EPOLLIN)  { if (!handleRead(manager)) return ; }
-    if (events & EPOLLOUT) { handleWrite(manager); }
+    if (events & (EPOLLERR | EPOLLHUP))
+    {
+        this->closeConnection(manager);
+        return ;
+    }
+    if (events & EPOLLIN)
+    {
+        if (!this->handleRead(manager))
+            return ;
+    }
+    if (events & EPOLLOUT)
+        this->handleWrite(manager);
 }
 ```
 
-> Deux `if` séparés (pas `else if`) : `EPOLLIN` et `EPOLLOUT` peuvent être prêts **en même temps**. Le sujet exige justement de surveiller lecture **et** écriture simultanément.
+*(Server/AroleClass/ClientClass.cpp)*
 
----
+Ici se cache **le piège le plus important de tout le projet**, et il faut bien comprendre la différence entre deux choses qui s'appellent presque pareil :
 
-## 6. Pourquoi on ne regarde JAMAIS `errno` après recv/send
+| Le nom | Qui le remplit | Ce que ça veut dire |
+|---|---|---|
+| **`_ev.events`** | **nous** | « ce qui m'**intéresse** » (ce qu'on a demandé à surveiller) |
+| **`events`** (le paramètre) | **le noyau**, via `epoll_wait` | « ce qui s'est **vraiment produit** maintenant » |
 
-Le sujet l'interdit. Comme on n'agit que sur un FD que epoll a déjà déclaré prêt, on n'a pas besoin d'errno :
+Le réflexe naïf serait de tester `_ev.events`. **Erreur** : ça revient à demander « qu'est-ce que je voulais surveiller ? » au lieu de « qu'est-ce qui est prêt ? ». C'est pour ça que `handle_event` reçoit `events` en paramètre, depuis la boucle (acte 3) — et qu'on teste **lui**.
 
-- `recv` **> 0** → on a des données, on les ajoute au buffer.
-- `recv` **== 0** → le client a fermé proprement (c'est une **valeur de retour**, pas errno → autorisé) → on ferme.
-- `recv` **< 0** → on **ne lit pas errno**, on `return` simplement. On retentera au prochain tour.
-- `send` **<= 0** → idem, `return`.
+Le noyau peut aussi nous rendre des événements qu'on n'a **jamais demandés** : `EPOLLERR` (erreur) et `EPOLLHUP` (le client a coupé la connexion). On les teste **en premier** : si ça part en vrille, inutile d'essayer de lire ou écrire, on ferme.
 
-Et si une vraie erreur réseau survient (reset, etc.) ? Le noyau nous la signalera via **`EPOLLERR`/`EPOLLHUP`**, qu'on traite en haut de `handle_event`. C'est ce mécanisme qui **remplace** la lecture d'errno.
+Notez aussi les deux `if` séparés (et non un `else if`) pour `EPOLLIN` et `EPOLLOUT` : un FD peut être prêt en lecture **et** en écriture en même temps. Le sujet impose justement de pouvoir surveiller les deux simultanément.
 
----
+Voyons maintenant la lecture :
 
-## 7. Cycle de vie d'une connexion (du début à la fin)
+```cpp
+bool Client::handleRead(Epoll & manager)
+{
+    char buffer[MAX_REQUEST];
+    int bytes_read = recv(this->_fd, buffer, sizeof(buffer), 0);
 
-```
-                 ┌─────────────────────────────────────────────┐
-   Client TCP ──▶│ Socket d'écoute (Acceptor) prêt en lecture   │
-                 └───────────────────┬─────────────────────────┘
-                                     │ epoll_wait rend EPOLLIN sur l'acceptor
-                                     ▼
-                Acceptor::handle_event
-                   ├─ accept()                → nouveau fd client
-                   ├─ new Client(fd, servfd)  → enregistré dans _activeClient
-                   ├─ fcntl(fd, O_NONBLOCK)
-                   └─ manager.add(client)     → epoll surveille le client (EPOLLIN)
-                                     │
-        ┌────────────────────────────┴───────────────────────────┐
-        ▼ (epoll_wait rend EPOLLIN sur le client)                 │
-   Client::handleRead                                             │
-     ├─ recv() → append dans _request                            │
-     └─ requête complète ? → genResponse()                       │
-                            → _ev.events = EPOLLOUT ; mod()       │
-        ▼ (epoll_wait rend EPOLLOUT)                              │
-   Client::handleWrite                                            │
-     ├─ send() le _response (envoi PARTIEL suivi via _bytes_send)│
-     └─ tout envoyé ? → _ev.events = EPOLLIN ; mod()  ───────────┘ (keep-alive : on reboucle)
-        ▼
-   Fermeture (recv==0, EPOLLHUP, ou timeout)
-   Client::closeConnection → manager.del(this) ; delete this
+    if (bytes_read == 0)
+    {
+        this->closeConnection(manager);
+        return (false);
+    }
+    if (bytes_read < 0)
+        return (true);
+    _request.append(buffer, bytes_read);
+    ...
+    if (_complete)
+    {
+        this->genResponse();
+        _ev.events = EPOLLOUT;
+        manager.mod(this);
+    }
+    return (true);
+}
 ```
 
-Points à retenir :
+*(Server/AroleClass/ClientClass.cpp)*
 
-- **Envoi partiel** : un `send` non-bloquant peut n'écrire qu'une partie. On mémorise combien d'octets sont déjà partis (`_bytes_send`) et on reprend là où on s'était arrêté au prochain `EPOLLOUT`. **Ne jamais supposer que tout part d'un coup.**
-- **Toggle** : tant qu'on lit, on surveille `EPOLLIN` ; quand la réponse est prête, on bascule en `EPOLLOUT` ; une fois envoyée, on rebascule en `EPOLLIN`. (Le cas où on surveille les deux en même temps — anti-deadlock upload — viendra avec `client_max_body_size`.)
+Trois cas après `recv`, et **on ne regarde jamais `errno`** (le sujet l'interdit après une lecture/écriture) :
 
----
+- **`bytes_read == 0`** : le client a fermé proprement de son côté. (C'est une **valeur de retour**, pas `errno` : autorisé.) → on ferme, et on renvoie `false` pour signaler « ce client n'existe plus, n'y touche pas ».
+- **`bytes_read < 0`** : pas de données disponibles pour l'instant. On ne s'affole pas, on ne ferme pas : on renvoie simplement la main, on réessaiera quand le noyau nous re-préviendra. Et si c'était une vraie erreur réseau ? Elle reviendra sous forme de `EPOLLERR`/`EPOLLHUP`, traités en haut de `handle_event`. C'est ce mécanisme qui **remplace** la lecture d'`errno`.
+- **`bytes_read > 0`** : on accumule les octets dans `_request`. On accumule, car une requête peut arriver en plusieurs morceaux.
 
-## 8. Gestion mémoire et fermeture des FD (règles dures)
+Quand la requête est **complète** (`_complete`), on prépare la réponse, et surtout : on **bascule l'intérêt** vers `EPOLLOUT` (« maintenant je veux écrire ») puis on prévient l'`Epoll` avec `manager.mod(this)`. La prochaine fois, c'est en écriture que le client sera prêt.
 
-Deux pièges classiques en Reactor, qu'on a verrouillés :
-
-**a) Un FD ne se ferme qu'à UN seul endroit.**
-Le `close()` est **uniquement** dans `Arole::~Arole`, gardé par `if (_fd != -1)`. Aucun autre code n'appelle `close()` sur ces FD. Sinon on risque un **double-close** : entre les deux fermetures, le noyau peut réattribuer le numéro de FD à une autre connexion qu'on fermerait par erreur.
-
-**b) Invariant `delete this`.**
-`Client::closeConnection` fait `delete this` (l'objet se suicide). Donc **tout appel qui peut fermer la connexion** (`closeConnection`, `manager.add/mod/del`, `handleRead` renvoyant `false`) **doit être immédiatement suivi d'un `return`**. Toucher `this` après = use-after-free.
-
-Chaîne de possession (qui détruit qui) :
-
-```
-Epoll  ──possède──▶ Server*  ──possède──▶ Socket*  ──possède (par valeur)──▶ Acceptor
-                                                                               │
-                                          _activeClient (static) ◀── Client* ──┘ (suivi par acceptor)
-```
-
-- À l'arrêt, `~Epoll` → `delete` les `Server` → `~Server` → `delete` les `Socket` → `~Socket` → `Acceptor::closeAll` ferme tous les `Client`, puis `~Acceptor`/`~Arole` ferme le FD d'écoute.
-- `Acceptor::closeAll` **copie** la map de clients avant d'itérer, car chaque `Client::~Client` modifie la vraie map (`_activeClient`) — éviter d'invalider l'itérateur.
-
-**Suivi des clients** : `Arole::_activeClient` est une `map<acceptorFd, map<clientFd, Client*>>` **statique** (partagée). Elle sert à (1) compter les clients par socket, (2) tous les fermer quand un socket ferme, (3) balayer les timeouts.
+> Le `return (false)` après une fermeture n'est pas un détail : dès qu'une connexion est fermée, l'objet `Client` est **détruit** (acte 6). Le `false` permet à `handle_event` de s'arrêter net et de ne plus jamais toucher l'objet. **Règle d'or : tout ce qui peut fermer la connexion est suivi d'un `return`.**
 
 ---
 
-## 9. Timeouts (ne jamais hang)
+## Acte 6 — Le serveur répond (et le piège de l'envoi partiel)
 
-`Arole::launchActiveRoutine`, appelée à chaque tour de boucle, parcourt tous les clients : si `now - _lastActivity >= 60 s`, le client est fermé. `_lastActivity` est rafraîchi à chaque réponse envoyée. Combiné au timeout de 60 s de `epoll_wait`, ça garantit qu'une connexion morte/silencieuse finit toujours par être nettoyée.
+Le client est maintenant prêt en écriture. La boucle appelle `handleWrite` :
 
----
+```cpp
+void Client::handleWrite(Epoll & manager)
+{
+    const char* data_to_send = _response.c_str() + _bytes_send;
+    int bytes_left_to_send = _response.length() - _bytes_send;
+    int bytes_sent_now = send(this->_fd, data_to_send, bytes_left_to_send, 0);
 
-## 10. Multi-port et signaux
-
-- **Multi-port** : `Server` tient une `map<port, Socket*>`. Chaque `Socket` = un `socket`/`bind`/`listen` + son `Acceptor`. On peut ouvrir/fermer des ports à chaud (`start`/`stop`).
-- **Signaux** : `SIGINT` (Ctrl-C) ne tue **pas** le serveur. Le handler met le flag global `isRunning = 0`. La boucle bascule alors dans `sigManager`, un **menu interactif** (SHOW / START / STOP / EXIT) qui permet d'inspecter/piloter le serveur. `EXIT` met `_active = 0` (arrêt propre), `exit` reprend l'exécution normale.
-  - `isRunning` est un `volatile sig_atomic_t` : c'est le **seul** type sûr à modifier depuis un handler de signal.
-
----
-
-## 11. Où se brancheront les features (pour la suite)
-
-Tout vient **par-dessus** ce moteur, sans le casser :
-
-- **Parsing HTTP** → une **machine à états dans `Client`** (READING_HEADERS → READING_BODY → READY), alimentée par les `recv` partiels déjà gérés dans `handleRead`.
-- **Génération de réponse** → remplace le placeholder `genResponse` (status line + headers + body), toujours envoyée via `handleWrite`.
-- **CGI** → une **nouvelle sous-classe de `Arole`** (`CgiPipe`) : les pipes du CGI sont des FD comme les autres, surveillés par le même `epoll`. C'est précisément ce que l'abstraction `Arole` permet.
-- **Config** → un parseur qui devient le point d'entrée et construit les `Server`/`Socket`.
-
----
-
-## 12. Glossaire express
-
-- **Non-bloquant** : un FD configuré avec `O_NONBLOCK` ; `recv`/`send` retournent immédiatement au lieu d'attendre.
-- **Level-triggered** (notre mode epoll par défaut) : tant qu'il reste des données à lire, epoll continue de nous le signaler → un `accept`/`recv` par event suffit. (À l'inverse, *edge-triggered* `EPOLLET` exigerait de tout vider en boucle.)
-- **`EPOLLIN`** : prêt en lecture. **`EPOLLOUT`** : prêt en écriture. **`EPOLLERR`/`EPOLLHUP`** : erreur / pair déconnecté.
-- **Handler** : objet (`Acceptor`/`Client`) qui sait traiter l'event de son propre FD.
-
----
-
-## 13. Carte des fichiers (pour réviser vite)
-
-```
-main.cpp                          point d'entrée : crée Epoll + Server, lance run()
-Epoll/epollClass.cpp              le Reactor : epoll_wait + dispatch + boucle + signaux
-Server/ServerClass.cpp            regroupe les sockets (multi-port)
-Server/socket/socketClass.cpp     un socket d'écoute (socket/bind/listen)
-Server/socket/sockaddrClass.cpp   wrapper sockaddr_in
-Server/AroleClass/AroleClass.cpp  base abstraite + suivi clients + timeouts
-Server/AroleClass/AcceptorClass.cpp   accepte les connexions
-Server/AroleClass/ClientClass.cpp     lit/écrit/ferme un client (handleRead/handleWrite)
+    if (bytes_sent_now <= 0)
+        return ;
+    _bytes_send += bytes_sent_now;
+    if (_bytes_send == _response.length())
+    {
+        this->cleanResponse();
+        this->_lastActivity = time(NULL);
+        _ev.events = EPOLLIN;
+        manager.mod(this);
+    }
+}
 ```
 
-Bonne révision. En cas de doute sur une contrainte : comparer avec **NGINX** et relire `CLAUDE.md` §0.
+*(Server/AroleClass/ClientClass.cpp)*
+
+Le détail qui surprend les débutants : **`send` n'envoie pas forcément tout d'un coup**. Sur un socket non-bloquant, si le tampon d'envoi du système est presque plein, `send` n'écrit qu'une partie et vous rend la main.
+
+D'où la mécanique de `_bytes_send` : c'est un compteur de **« combien d'octets sont déjà partis »**.
+
+- `data_to_send = _response.c_str() + _bytes_send` : on reprend **là où on s'était arrêté**.
+- `bytes_left_to_send` : ce qu'il reste à envoyer.
+- Après chaque `send` réussi, on avance le compteur.
+
+Tant que tout n'est pas parti, on reste en `EPOLLOUT` et on reviendra ici au prochain tour pour envoyer la suite. Quand `_bytes_send == _response.length()`, tout est envoyé : on nettoie, on remet l'heure de dernière activité à jour, et on **rebascule l'intérêt vers `EPOLLIN`** — prêt pour une nouvelle requête du même client.
+
+Comme pour `recv`, si `send` renvoie `<= 0`, on ne consulte pas `errno` : on rend la main, on réessaiera.
+
+---
+
+## Acte 7 — La séparation : fermer proprement
+
+Un client s'en va (il a coupé, ou il a eu une erreur, ou il a dépassé son temps). On ferme :
+
+```cpp
+void Client::closeConnection(Epoll & manager)
+{
+    manager.del(this);
+    delete this;
+}
+```
+
+*(Server/AroleClass/ClientClass.cpp)*
+
+Deux gestes, dans cet ordre :
+
+1. **`manager.del(this)`** — on dit à l'`Epoll` d'**arrêter de surveiller** ce FD.
+2. **`delete this`** — l'objet se détruit lui-même.
+
+Mais où est le `close()` du FD ? Il n'est **pas ici**, et c'est volontaire. Il est dans le destructeur de la classe de base, appelé automatiquement par le `delete` :
+
+```cpp
+Arole::Arole(void) : _fd(-1) {}
+Arole::Arole(int fd) : _fd(fd) {}
+Arole::~Arole(void) {if (_fd != -1) close(_fd);}
+```
+
+*(Server/AroleClass/AroleClass.cpp)*
+
+**Un FD ne doit être fermé qu'une seule fois, à un seul endroit.** Pourquoi ? Si on le fermait à deux endroits, entre les deux le système pourrait réattribuer ce même numéro de FD à une **nouvelle** connexion — qu'on fermerait alors par erreur. En centralisant le `close()` dans `~Arole`, ce bug devient impossible. Le `if (_fd != -1)` protège un dernier cas : un objet qui n'aurait jamais reçu de FD valide ne tentera pas de fermer n'importe quoi (`_fd` vaut `-1` par défaut).
+
+---
+
+## Acte 8 — Le gardien du temps
+
+Reprenons la boucle de l'acte 3. Après avoir traité tous les événements, elle appelle :
+
+```cpp
+Arole::launchActiveRoutine(*this);
+```
+
+Que fait ce gardien ?
+
+```cpp
+void Arole::launchActiveRoutine(Epoll & manager)
+{
+    time_t now = time(NULL);
+
+    for (std::map<int, std::map<int, Client *> >::iterator it = _activeClient.begin();
+         it != _activeClient.end(); ++it)
+    {
+        std::map<int, Client *>::iterator clientIT = it->second.begin();
+        while (clientIT != it->second.end())
+        {
+            Client *client = clientIT->second;
+            clientIT++;
+            if (client->getInactiveTime(now))
+                client->closeConnection(manager);
+        }
+    }
+}
+```
+
+*(Server/AroleClass/AroleClass.cpp)*
+
+Il passe en revue **tous les clients connectés** et ferme ceux qui dorment depuis trop longtemps :
+
+```cpp
+bool Client::getInactiveTime(time_t now) const
+{
+    if ((now - _lastActivity) >= 60)
+        return true;
+    return false;
+}
+```
+
+*(Server/AroleClass/ClientClass.cpp)*
+
+Un client qui n'a rien fait depuis 60 secondes est considéré mort, et on le ferme. C'est ce qui empêche qu'une connexion ouverte mais silencieuse ne reste là pour toujours (et c'est pour ça que `epoll_wait` se réveille au moins toutes les 60 s — pour passer ce gardien régulièrement, même sans trafic).
+
+Petit détail élégant : remarquez `clientIT++` **avant** d'éventuellement appeler `closeConnection`. Comme fermer un client le retire de la map (`_activeClient`), on avance l'itérateur **d'abord**, pour ne pas se retrouver avec un itérateur qui pointe sur du vide.
+
+Où est rangée cette liste de clients ? Dans une structure statique partagée, déclarée dans `Arole` :
+
+```cpp
+static std::map<int, std::map<int, Client *> > _activeClient;
+```
+
+*(Server/AroleClass/AroleClass.hpp)*
+
+Lisez-la comme : « pour chaque socket d'écoute (sa clé = le FD de l'acceptor), la liste de ses clients (clé = le FD du client) ». Ça permet de retrouver, compter, et fermer tous les clients d'un port d'un seul coup.
+
+---
+
+## Acte 9 — Quand on appuie sur Ctrl-C
+
+Dernière scène. Que se passe-t-il si on fait `Ctrl-C` ? Sur la plupart des programmes, ça tue tout. Pas chez nous.
+
+```cpp
+volatile sig_atomic_t isRunning = 1;
+
+void Epoll::handleSigEvent(int signum)
+{
+    (void)signum;
+    isRunning = 0;
+}
+```
+
+*(Epoll/epollClass.cpp)*
+
+Le handler de signal ne fait **qu'une** chose : mettre le drapeau `isRunning` à `0`. (Le type `volatile sig_atomic_t` est le seul qu'on a le droit de modifier en toute sécurité depuis un handler de signal — c'est une règle du langage.)
+
+Souvenez-vous de la boucle (acte 3) :
+
+```cpp
+while (this->_active)
+{
+    if (isRunning)
+        { ... boucle d'événements normale ... }
+    else
+        sigManager();
+}
+```
+
+Quand `isRunning` tombe à `0`, on ne tue pas le serveur : on bascule dans `sigManager`, un **menu interactif** (`SHOW` / `START` / `STOP` / `EXIT`) qui permet d'inspecter le serveur, d'ouvrir ou fermer des ports à chaud. `EXIT` met `_active` à `0` pour sortir vraiment ; reprendre l'exécution remet `isRunning` à `1` et on repart dans la boucle normale.
+
+---
+
+## Épilogue — Ce qui viendra se poser sur cette fondation
+
+Tout ce qu'on vient de raconter est **le moteur**, et il est terminé. Les features HTTP ne le modifieront pas : elles se brancheront dessus aux endroits qu'on a laissés ouverts.
+
+- **Le parsing HTTP** prendra place dans `Client::handleRead` : c'est là qu'on accumule déjà les octets dans `_request`. On y mettra une petite machine à états qui décidera *quand* la requête est vraiment complète (ligne de requête, en-têtes, corps), au lieu d'un simple drapeau.
+- **La vraie réponse HTTP** remplacera la génération actuelle, mais partira toujours par `handleWrite`, avec sa mécanique d'envoi partiel inchangée.
+- **Le CGI** sera... **un nouveau `Arole`**. Les tuyaux (`pipe`) d'un programme CGI sont des FD comme les autres : on créera une classe `CgiPipe : public Arole`, on l'enregistrera avec `manager.add(...)`, et le même `epoll` la surveillera. C'est exactement ce que l'abstraction `Arole` a été conçue pour permettre.
+- **Le fichier de configuration** deviendra le point d'entrée et construira les `Server`/`Socket` à la place des arguments actuels.
+
+Si vous avez compris les neuf actes, vous avez compris le serveur. Le reste, ce sont des invités qui arrivent à une fête déjà bien organisée.
+
+---
+
+### Pour réviser en 30 secondes
+
+1. Un seul `Epoll`, un seul `epoll_wait` : c'est le seul endroit où on attend.
+2. Tout ce qu'on surveille est un `Arole` ; on retrouve le bon objet via `data.ptr` ; on appelle `handle_event` — le polymorphisme fait le tri.
+3. On réagit à **ce qui est prêt** (`events`), jamais à **ce qui nous intéresse** (`_ev.events`).
+4. Jamais d'`errno` après `recv`/`send` ; les vraies erreurs reviennent par `EPOLLERR`/`EPOLLHUP`.
+5. `send` peut être partiel → on suit `_bytes_send`.
+6. On bascule l'intérêt `EPOLLIN` ↔ `EPOLLOUT` avec `manager.mod(...)`.
+7. Un FD se ferme **une fois**, dans `~Arole`. Après une fermeture, on `return` toujours.
+8. Un gardien ferme les clients inactifs depuis 60 s.
