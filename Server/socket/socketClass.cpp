@@ -3,7 +3,7 @@
 #include <sys/epoll.h>
 #include <sys/socket.h>
 
-Socket::Socket(void) : _active(false)
+Socket::Socket(void)
 {
 	socklen_t len = sizeof(sockaddr);
 
@@ -35,7 +35,6 @@ Socket::Socket(void) : _active(false)
 
 Socket::Socket(unsigned short int port)
 {
-	_active = false;
 	_sockfd = socket(AF_INET, SOCK_STREAM, 0);
 	if (_sockfd == -1)
 		throw badExec();
@@ -64,21 +63,18 @@ Socket& Socket::operator=(Socket const & other)
 }
 
 int			Socket::getSockfd(void) const {return(_sockfd);}
-bool			Socket::getActiveStatus(void) const {return (_active);}
 Sockaddr const &	Socket::getAddr(void) const {return(_addr);}
 Acceptor const &	Socket::getAcceptor(void) const {return (_acceptor);}
 
 void 		Socket::start(Epoll & manager)
 {
 	_acceptor.start(manager);
-	_active = true;
 	std::cout << "Le socket sur le port " << ntohs(_addr.getPort()) << " est ouvert !" << std::endl;
 }
 
 void 		Socket::stop(Epoll & manager)
 {
 	_acceptor.closeAll(manager);
-	_active = false;
 	std::cout << "Le socket sur le port " << ntohs(_addr.getPort()) << " est ferme !" << std::endl;
 }
 

@@ -1,5 +1,5 @@
 services:
-  myvim:
+  webserv:
     image: youyou240/webserv
     container_name: webserv
     stdin_open: true

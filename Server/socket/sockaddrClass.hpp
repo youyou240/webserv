@@ -12,10 +12,10 @@ class Sockaddr {
 
 public:
 	Sockaddr(void);
-	Sockaddr(Sockaddr &);
+	Sockaddr(Sockaddr const &);
 	~Sockaddr(void);
 
-	Sockaddr& operator=(Sockaddr &);
+	Sockaddr& operator=(Sockaddr const &);
 
 	struct sockaddr_in const&	getStruct(void) const;
 	short unsigned int	getFamily(void) const;

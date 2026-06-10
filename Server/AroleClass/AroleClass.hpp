@@ -1,6 +1,5 @@
 # pragma once
 
-# include "../Epoll/epollClass.hpp"
 # include <sys/epoll.h>
 # include <sys/socket.h>
 # include <fcntl.h>
@@ -11,6 +10,8 @@
 # include <ctime>
 # include <unistd.h>
 # include <ostream>
+# include <cerrno>
+# include <stdint.h>
 
 class Client;
 class Epoll;
@@ -31,8 +32,8 @@ public:
 	Arole(void);
 	Arole(int fd);
 	virtual ~Arole(void);
-	
-	virtual void	handle_event(Epoll & manager) = 0;
+
+	virtual void	handle_event(Epoll & manager, uint32_t events) = 0;
 
 	static void		launchActiveRoutine(Epoll &);
 	static unsigned int	getAllClients(void);
@@ -52,7 +53,7 @@ public:
 	Acceptor(int fd);
 	~Acceptor(void);
 
-	virtual void	handle_event(Epoll & manager);
+	virtual void	handle_event(Epoll & manager, uint32_t events);
 	
 	unsigned int	getNbClient(void) const;
 
@@ -83,8 +84,11 @@ public:
 
 	Client(int fd, int servfd);
 	~Client(void);
-	
-	virtual void	handle_event(Epoll & manager);
+
+	virtual void	handle_event(Epoll & manager, uint32_t events);
+
+	bool	handleRead(Epoll & manager);
+	void	handleWrite(Epoll & manager);
 
 	void	genResponse(void);
 	void	cleanRequest(void);

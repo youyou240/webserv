@@ -8,18 +8,19 @@
 # include <iostream>
 # include <exception>
 # include <cerrno>
+# include <string.h>
 # include <unistd.h>
 # include <map>
 # include "sockaddrClass.hpp"
 # include "../AroleClass/AroleClass.hpp"
+
+class Epoll;
 
 class Socket {
 
 	int		_sockfd;
 	Sockaddr	_addr;
 	Acceptor	_acceptor;
-
-	bool		_active;
 
 	Socket(Socket const &);
 	Socket& operator=(Socket const &);
@@ -32,7 +33,6 @@ public:
 	int			getSockfd(void) const;
 	Sockaddr const &	getAddr(void) const;
 	Acceptor const &	getAcceptor(void) const;
-	bool			getActiveStatus(void) const;
 	
 	void 		start(Epoll &);
 	void 		stop(Epoll &);

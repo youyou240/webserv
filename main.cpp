@@ -1,5 +1,6 @@
-# include "Server/ServerClass.hpp"
 # include <stdio.h>
+# include "Server/ServerClass.hpp"
+# include "Epoll/epollClass.hpp"
 
 static void	feelVecWithPort(std::vector<unsigned int short> & ports, int argc, char **argv)
 {
@@ -24,9 +25,11 @@ int main(int argc, char **argv)
 	std::vector<unsigned int short> ports;
 	feelVecWithPort(ports, argc, argv);
 	try {
-		Server serv(nbPort, ports);
-		std::signal(SIGINT, serv.handleSigEvent);
-		serv.run();
+		Epoll & epoll = Epoll::createEpoll();
+		Server	*serv = new Server(nbPort, ports, epoll);
+		std::signal(SIGINT, epoll.handleSigEvent);
+		epoll.addServer(serv);
+		epoll.run();
 	} catch (std::exception & e) {	
 		std::cout << e.what() << std::endl;
 	}

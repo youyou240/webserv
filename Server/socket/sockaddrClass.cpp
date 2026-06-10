@@ -12,7 +12,7 @@ Sockaddr::Sockaddr(void)
 	bzero(&(_addr.sin_zero), 8);
 }
 
-Sockaddr::Sockaddr(Sockaddr & other)
+Sockaddr::Sockaddr(Sockaddr const & other)
 {
 	_addr.sin_family = other.getFamily();
 	_addr.sin_port = other.getPort();
@@ -22,7 +22,7 @@ Sockaddr::Sockaddr(Sockaddr & other)
 
 Sockaddr::~Sockaddr(void) {}
 
-Sockaddr& Sockaddr::operator=(Sockaddr & other)
+Sockaddr& Sockaddr::operator=(Sockaddr const & other)
 {
 	if (this == &other)
 		return (*this);

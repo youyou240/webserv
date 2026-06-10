@@ -1,42 +1,41 @@
 # pragma once
 
-# include "socket/socketClass.hpp"
-# include "AroleClass/AroleClass.hpp"
-# include "Epoll/epollClass.hpp"
+# include <map>
 # include <vector>
+# include <ostream>
+# include <exception>
 # include <csignal>
 # include <cstdlib>
 
+class Epoll;
+class Socket;
 
 class Server {
 
 	std::map<unsigned short int, Socket *>	_sockets;
 
-	Epoll					_epoll;
+	Epoll&					_epoll;
 
-	int					_active;
 	Server(Server const &);
 	Server& operator=(Server const &);
 	
-	void	start(unsigned short int);
-	void	stop(unsigned short int);
 	
 	void		sigManager(void);
 
 public:
-	Server(void);
-	Server(int, std::vector<unsigned short int> &);
+	Server(Epoll &);
+	Server(int, std::vector<unsigned short int> &, Epoll &);
 	~Server(void);
 
+	void		start(unsigned short int);
+	void		stop(unsigned short int);
+	
+	int		alreadyUsePort(unsigned short int);
+
 	size_t		getOpenSocket(void) const;
-	Epoll const &	getEpoll(void) const;
 	int		getIsActive(void) const;
 
-	void	run(void);
-
-	void	allSocketDebug(void) const;
-
-	static void	handleSigEvent(int signum);
+	void		allSocketDebug(void) const;
 
 	class toMuchSocket : public std::exception {
 		virtual const char * what() const throw() {

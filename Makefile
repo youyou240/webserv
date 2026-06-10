@@ -7,10 +7,11 @@ CPPFLAGS = -Wall -Wextra -Werror -g3 -std=c++98
 SRCS = main.cpp Server/ServerClass.cpp	\
 		Server/socket/socketClass.cpp \
 		Server/socket/sockaddrClass.cpp \
-		Server/Epoll/epollClass.cpp	\
+		Epoll/epollClass.cpp	\
 		Server/AroleClass/AroleClass.cpp \
 		Server/AroleClass/ClientClass.cpp \
 		Server/AroleClass/AcceptorClass.cpp \
+		myzod/safeInputClass.cpp
  
 OBJS = $(SRCS:%.cpp=%.o)
 

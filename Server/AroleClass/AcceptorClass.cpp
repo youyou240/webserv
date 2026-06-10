@@ -1,4 +1,5 @@
 #include "AroleClass.hpp"
+#include "../../Epoll/epollClass.hpp"
 #include <vector>
 
 unsigned int Arole::_acceptor = 0;
@@ -46,10 +47,9 @@ void		Acceptor::closeAll(Epoll & manager)
 	_activeClient.erase(this->_fd);
 	manager.del(this);
 	this->_acceptor -= 1;
-	close(this->_fd);
 }
 
-void	Acceptor::handle_event(Epoll & manager)
+void	Acceptor::handle_event(Epoll & manager, uint32_t)
 {
 	int fd = accept(_fd, NULL, NULL);
 	if (fd == -1)

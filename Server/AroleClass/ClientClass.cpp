@@ -1,4 +1,5 @@
 # include "AroleClass.hpp"
+# include "../../Epoll/epollClass.hpp"
 #include <sys/epoll.h>
 
 std::map<int, std::map<int, Client *> > Arole::_activeClient;
@@ -44,58 +45,61 @@ void	Client::genResponse(void)
 	this->cleanRequest();
 }
 	
-void	Client::handle_event(Epoll & manager)
+void	Client::handle_event(Epoll & manager, uint32_t events)
 {
-	if (this->_ev.events & EPOLLIN)
+	if (events & (EPOLLERR | EPOLLHUP))
 	{
-		char buffer[4096];
-		int bytes_read = recv(this->_fd, buffer, sizeof(buffer), 0);
-		if (bytes_read == -1)
-		{
-			if (errno == EAGAIN || errno == EWOULDBLOCK)
-				return ;
-			this->closeConnection(manager);
-			return ;
-		}
-		if (bytes_read == 0)
-		{
-			this->closeConnection(manager);
-			return ;
-		}
-		else if (bytes_read > 0)
-		{
-			_request.append(buffer, bytes_read);
-			if (_request.find("\tfin\t") != std::string::npos)
-                    		_complete = true;
-		}
-		if (_complete)
-		{
-			this->genResponse();
-			_ev.events = EPOLLOUT;
-			manager.mod(this);
-		}
+		this->closeConnection(manager);
+		return ;
 	}
-	else if (this->_ev.events & EPOLLOUT)
+	if (events & EPOLLIN)
 	{
-		const char*	data_to_send = _response.c_str() + _bytes_send;
-		int 		bytes_left_to_send = _response.length() - _bytes_send;
-		int		bytes_sent_now = send(this->_fd, data_to_send, bytes_left_to_send, 0);
-
-		if (bytes_sent_now == -1)
-		{
-			if (errno == EAGAIN || errno == EWOULDBLOCK)
-				return ;
-			this->closeConnection(manager);
+		if (!this->handleRead(manager))
 			return ;
-		}
-		_bytes_send += bytes_sent_now;
-		if (_bytes_send == _response.length())
-		{
-			this->cleanResponse();
-			this->_lastActivity = time(NULL);
-			_ev.events = EPOLLIN;
-			manager.mod(this);
-		}
+	}
+	if (events & EPOLLOUT)
+		this->handleWrite(manager);
+}
+
+bool	Client::handleRead(Epoll & manager)
+{
+	char	buffer[MAX_REQUEST];
+	int	bytes_read = recv(this->_fd, buffer, sizeof(buffer), 0);
+
+	if (bytes_read == 0)
+	{
+		this->closeConnection(manager);
+		return (false);
+	}
+	if (bytes_read < 0)
+		return (true);
+	_request.append(buffer, bytes_read);
+	if (_request.find("\tfin\t") != std::string::npos)
+		_complete = true;
+	if (_complete)
+	{
+		this->genResponse();
+		_ev.events = EPOLLOUT;
+		manager.mod(this);
+	}
+	return (true);
+}
+
+void	Client::handleWrite(Epoll & manager)
+{
+	const char*	data_to_send = _response.c_str() + _bytes_send;
+	int		bytes_left_to_send = _response.length() - _bytes_send;
+	int		bytes_sent_now = send(this->_fd, data_to_send, bytes_left_to_send, 0);
+
+	if (bytes_sent_now <= 0)
+		return ;
+	_bytes_send += bytes_sent_now;
+	if (_bytes_send == _response.length())
+	{
+		this->cleanResponse();
+		this->_lastActivity = time(NULL);
+		_ev.events = EPOLLIN;
+		manager.mod(this);
 	}
 }
 
@@ -109,6 +113,5 @@ bool	Client::getInactiveTime(time_t now) const
 void	Client::closeConnection(Epoll & manager)
 {
 	manager.del(this);
-	close(this->_fd);
 	delete this;
 }

@@ -1,9 +1,9 @@
 #include "AroleClass.hpp"
 #include <fcntl.h>
 
-Arole::Arole(void) {}
+Arole::Arole(void) : _fd(-1) {}
 Arole::Arole(int fd) : _fd(fd) {}
-Arole::~Arole(void) {close(this->_fd);}
+Arole::~Arole(void) {if (_fd != -1) close(_fd);}
 
 int			Arole::getFD(void) const {return(_fd);}
 struct epoll_event &	Arole::getStructEvent(void) {return(_ev);}
