@@ -28,6 +28,11 @@ void	Acceptor::setFD(int fd)
 	_activeClient[_fd];
 }
 
+void	Acceptor::addServerConfig(const ServerConfig * cfg)
+{
+	_configs.push_back(cfg);
+}
+
 unsigned int	Acceptor::getNbClient(void) const
 {
 	return(_activeClient[_fd].size());

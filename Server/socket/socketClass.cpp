@@ -1,48 +1,31 @@
-#include "socketClass.hpp"
-#include <netinet/in.h>
-#include <sys/epoll.h>
-#include <sys/socket.h>
+# include "socketClass.hpp"
+# include <netinet/in.h>
+# include <sys/epoll.h>
+# include <sys/socket.h>
 
-Socket::Socket(void)
+Socket::Socket(std::string const & host, uint16_t port)
 {
-	socklen_t len = sizeof(sockaddr);
+	int	opt = 1;
 
+	_addr.resolve(host, port);
 	_sockfd = socket(AF_INET, SOCK_STREAM, 0);
 	if (_sockfd == -1)
 		throw badExec();
 	if (fcntl(_sockfd, F_SETFL, O_NONBLOCK) == -1)
 	{
 		close(_sockfd);
-    		throw badExec();
+		throw badExec();
+	}
+	if (setsockopt(_sockfd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) == -1)
+	{
+		close(_sockfd);
+		throw badExec();
 	}
 	if (bind(_sockfd, (struct sockaddr *)&_addr.getStruct(), sizeof(struct sockaddr)) == -1)
 	{
-		close(_sockfd);	
+		close(_sockfd);
 		throw badExec();
 	}
-	if (getsockname(_sockfd, (struct sockaddr *)&_addr.getStruct(), &len) == -1)
-	{
-		close(_sockfd);	
-		throw badExec();
-	}
-	_acceptor.setFD(_sockfd);
-	if (listen(_sockfd, SOMAXCONN) == -1)
-	{
-		close(_sockfd);	
-		throw badExec();
-	}
-}
-
-Socket::Socket(unsigned short int port)
-{
-	_sockfd = socket(AF_INET, SOCK_STREAM, 0);
-	if (_sockfd == -1)
-		throw badExec();
-	if (fcntl(_sockfd, F_SETFL, O_NONBLOCK) == -1)
-    		throw badExec();
-	_addr.setPort(port);
-	if (bind(_sockfd, (struct sockaddr *)&_addr.getStruct(), sizeof(struct sockaddr)) == -1)
-		throw badExec();
 	_acceptor.setFD(_sockfd);
 	if (listen(_sockfd, SOMAXCONN) == -1)
 	{
@@ -61,6 +44,8 @@ Socket& Socket::operator=(Socket const & other)
 		return (*this);
 	return (*this);
 }
+
+void	Socket::addServerConfig(const ServerConfig * cfg) {_acceptor.addServerConfig(cfg);}
 
 int			Socket::getSockfd(void) const {return(_sockfd);}
 Sockaddr const &	Socket::getAddr(void) const {return(_addr);}

@@ -2,99 +2,98 @@
 #include "socket/socketClass.hpp"
 #include "AroleClass/AroleClass.hpp"
 #include "../Epoll/epollClass.hpp"
-#include <exception>
-#include <netinet/in.h>
-#include <unistd.h>
+#include <sstream>
+#include <iostream>
 
 Server& Server::operator=(Server const & other) {(void)other; return(*this);}
 
-
-Server::Server(Epoll & epoll) : _epoll(epoll)
+static std::string	makeKey(std::string const & host, uint16_t port)
 {
-	Socket *sock = new Socket;
-	_sockets.insert(std::pair<unsigned short int, Socket *>(ntohs(sock->getAddr().getPort()), sock));
-	sock->start(_epoll);
+	std::ostringstream	oss;
+
+	oss << (host.empty() ? "0.0.0.0" : host) << ":" << port;
+	return (oss.str());
 }
 
-Server::Server(int nbSocket, std::vector<unsigned short int> & ports, Epoll & epoll) : _epoll(epoll)
+Server::Server(std::vector<ServerConfig> const & configs, Epoll & epoll) : _configs(configs), _epoll(epoll)
 {
-	if (nbSocket <= 0 || nbSocket > 10)
-		throw toMuchSocket();
-
-	for (int i = 0; i < nbSocket; ++i)
+	for (size_t i = 0; i < _configs.size(); ++i)
 	{
-		try {
-			Socket *sock;
-			if (ports.empty() || static_cast<long unsigned int>(i) >= ports.size())
-				sock = new Socket;
-			else
-				sock = new Socket(ports[i]);
-			_sockets.insert(std::pair<unsigned short int, Socket *>(ntohs(sock->getAddr().getPort()), sock));
-			sock->start(_epoll);
-		} catch (std::exception &e) {
-			std::cout << e.what() << std::endl;
+		for (size_t j = 0; j < _configs[i].listen.size(); ++j)
+		{
+			std::string	host = _configs[i].listen[j].first;
+			uint16_t	port = _configs[i].listen[j].second;
+			std::string	key = makeKey(host, port);
+			std::map<std::string, Socket *>::iterator it = _sockets.find(key);
+
+			if (it != _sockets.end())
+			{
+				it->second->addServerConfig(&_configs[i]);
+				continue ;
+			}
+			try {
+				Socket *sock = new Socket(host, port);
+				sock->addServerConfig(&_configs[i]);
+				_sockets.insert(std::make_pair(key, sock));
+				sock->start(_epoll);
+			} catch (std::exception &e) {
+				std::cout << e.what() << std::endl;
+			}
 		}
 	}
 }
 
 Server::~Server(void)
 {
-	std::map<unsigned short int, Socket *>::iterator it = _sockets.begin();
-	while (it != _sockets.end())
+	for (std::map<std::string, Socket *>::iterator it = _sockets.begin(); it != _sockets.end(); ++it)
 	{
-		Socket *sock = it->second;
-		it++;
-		_sockets.erase(ntohs(sock->getAddr().getPort()));
-		sock->stop(_epoll);
-		delete sock;
+		it->second->stop(_epoll);
+		delete it->second;
 	}
+	_sockets.clear();
 }
 
 int		Server::alreadyUsePort(unsigned short int port)
 {
-	std::map<unsigned int short, Socket *>::iterator it = _sockets.find(port);
-	if (it == _sockets.end())
-		return (0);
-	return (1);
+	if (_sockets.find(makeKey("", port)) != _sockets.end())
+		return (1);
+	return (0);
 }
 
 size_t		Server::getOpenSocket(void) const {return (this->_sockets.size());}
 
-
 void	Server::start(unsigned short int port)
 {
-	std::map<unsigned int short, Socket *>::iterator it = _sockets.find(port);
-	if (it == _sockets.end())
-	{		
-		try {
-			Socket *sock = new Socket(port);
-			_sockets.insert(std::pair<unsigned short int, Socket *>(ntohs(sock->getAddr().getPort()), sock));
-			sock->start(_epoll);
-		} catch (std::exception &e) {
-			std::cout << e.what() << std::endl;
-		}
+	std::string	key = makeKey("", port);
+
+	if (_sockets.find(key) != _sockets.end())
+		return ;
+	try {
+		Socket *sock = new Socket("", port);
+		_sockets.insert(std::make_pair(key, sock));
+		sock->start(_epoll);
+	} catch (std::exception &e) {
+		std::cout << e.what() << std::endl;
 	}
 }
 
 void	Server::stop(unsigned short int port)
 {
-	std::map<unsigned int short, Socket *>::iterator it = _sockets.find(port);
-	if (it != _sockets.end())
-	{
-		Socket *sock = it->second;
-		sock->stop(_epoll);
-		delete sock;
-		_sockets.erase(port);
-	}
+	std::map<std::string, Socket *>::iterator it = _sockets.find(makeKey("", port));
+
+	if (it == _sockets.end())
+		return ;
+	it->second->stop(_epoll);
+	delete it->second;
+	_sockets.erase(it);
 }
 
 void	Server::allSocketDebug(void) const
 {
-	for (std::map<unsigned short int, Socket *>::const_iterator it = _sockets.begin(); it != _sockets.end(); ++it)
-			std::cout << *(it->second) << "\tactive" << std::endl;
+	for (std::map<std::string, Socket *>::const_iterator it = _sockets.begin(); it != _sockets.end(); ++it)
+		std::cout << *(it->second) << "\tactive" << std::endl;
 	std::cout << std::endl;
 }
-
 
 std::ostream &	operator<<(std::ostream & o, Server const &serv)
 {
@@ -102,4 +101,3 @@ std::ostream &	operator<<(std::ostream & o, Server const &serv)
 	serv.allSocketDebug();
 	return (o);
 }
-

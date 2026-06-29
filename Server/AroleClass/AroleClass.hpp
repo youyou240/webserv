@@ -15,6 +15,7 @@
 
 class Client;
 class Epoll;
+struct ServerConfig;
 
 class Arole {
 
@@ -46,18 +47,20 @@ public:
 
 class Acceptor : public Arole {
 
-	bool	_active;
+	bool					_active;
+	std::vector<const ServerConfig*>	_configs;
 public:
-	
+
 	Acceptor(void);
 	Acceptor(int fd);
 	~Acceptor(void);
 
 	virtual void	handle_event(Epoll & manager, uint32_t events);
-	
+
 	unsigned int	getNbClient(void) const;
 
 	void		setFD(int);
+	void		addServerConfig(const ServerConfig * cfg);
 
 	void		start(Epoll &);
 	void		closeAll(Epoll &);

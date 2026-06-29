@@ -15,6 +15,8 @@ Avant de lever le rideau, présentons les acteurs. Ils sont peu nombreux, et c'e
 - **`Acceptor`** *(Server/AroleClass/AcceptorClass.cpp)* — un `Arole` concret. Sa seule mission : **accepter les nouvelles connexions** sur un port.
 - **`Client`** *(Server/AroleClass/ClientClass.cpp)* — un autre `Arole` concret. Il représente **un visiteur connecté** : il lit ce qu'on lui envoie, il répond, puis il s'en va.
 - **`Socket`** *(Server/socket/socketClass.cpp)* et **`Server`** *(Server/ServerClass.cpp)* — la logistique : ouvrir les ports, en gérer plusieurs.
+- **`ConfigParser`** *(Config/ConfigParserClass.cpp)* — le cartographe. Il lit le fichier de configuration et en tire une carte que tout le reste va suivre.
+- **`ServerConfig` / `LocationConfig`** *(Config/ServerConfigClass.cpp, Config/LocationConfigClass.cpp)* — la carte elle-même : des sacs de données décrivant chaque site et chacune de ses routes.
 
 Retenez surtout cette phrase, tout le reste en découle :
 
@@ -22,13 +24,113 @@ Retenez surtout cette phrase, tout le reste en découle :
 
 ---
 
+## Acte 0 — Avant le lever de rideau : lire la carte
+
+Avant d'ouvrir le moindre port, le serveur a besoin de savoir **quoi servir, où, et comment**. Cette information vit dans un fichier de configuration (`configs/default.conf` par défaut), et c'est la toute première chose que `main.cpp` traite :
+
+```cpp
+ConfigParser parser(path);
+parser.parse();
+std::cout << parser << std::endl;
+```
+
+*(main.cpp)*
+
+`path` vient de la ligne de commande (`./webserv [config]`), ou vaut le fichier par défaut si on ne passe rien. À la sortie de `parse()`, on tient une **carte du serveur** : un `std::vector<ServerConfig>`. Voyons comment le texte devient cette carte.
+
+### Deux passes : d'abord des jetons, ensuite du sens
+
+Le parseur ne cherche pas le sens caractère par caractère. Il procède en **deux temps**, comme on lit une phrase : on découpe d'abord en mots, on comprend la grammaire ensuite.
+
+**Passe 1 — le lexer** transforme le texte en une liste de **jetons** (`Token`). Trois caractères sont « structurels » et forment chacun un jeton — `{`, `}`, `;` — tout le reste est un **mot**. Les commentaires (`#` jusqu'à la fin de ligne) sont jetés, et chaque jeton retient **son numéro de ligne**, pour les messages d'erreur.
+
+```cpp
+Token tok;
+tok.type = T_WORD;
+tok.value = content.substr(start, i - start);
+tok.line = line;
+_tokens.push_back(tok);
+```
+
+*(Config/ConfigParserClass.cpp)*
+
+Ainsi `location /uploads {` devient trois jetons : `location` (mot), `/uploads` (mot), `{` (structurel) — et le lexer ne se demande pas encore si c'est valide.
+
+### Passe 2 — la descente récursive
+
+Avec les jetons en main, on les lit par **descente récursive** : une fonction par niveau de grammaire, qui s'appellent en cascade.
+
+- `parseServer` attend `server`, puis `{`, puis une suite d'items jusqu'à `}`.
+- Chaque item est soit un bloc `location` (→ `parseLocation`), soit une **directive** (→ `parseDirective`).
+- `parseDirective` lit le nom, collecte ses arguments jusqu'au `;`, puis **aiguille** vers le bon handler :
+
+```cpp
+if (key.value == "listen")
+    handleListen(server, location, args, key.line);
+else if (key.value == "root")
+    handleRoot(server, location, args, key.line);
+...
+else
+    fail("unknown directive '" + key.value + "'", key.line);
+```
+
+*(Config/ConfigParserClass.cpp)*
+
+Chaque handler est **strict** : il vérifie le nombre d'arguments, le **placement** (un `listen` dans une `location` est refusé, un `upload_store` au niveau server aussi) et la validité des valeurs (port numérique 1–65535, taille `1m`/`512k`, code 100–599). À la moindre entorse, `fail(...)` lève une exception qui porte **le numéro de ligne** :
+
+```
+Config error (line 14): unknown directive 'autoindexx'
+```
+
+C'est du **fail-fast** : une config douteuse arrête le démarrage immédiatement, plutôt que de produire un comportement surprenant plus tard.
+
+### L'héritage : la carte se complète toute seule
+
+Réécrire `root` et `index` dans **chaque** `location` serait pénible. D'où l'héritage : le `server` fournit les valeurs par défaut, une `location` n'écrit que ce qu'elle veut **changer**. La résolution se fait en fin de parse :
+
+```cpp
+void LocationConfig::inheritFrom(ServerConfig const & server)
+{
+    if (!hasRoot)
+        root = server.root;
+    if (!hasAutoindex)
+        autoindex = server.autoindex;
+    ...
+}
+```
+
+*(Config/LocationConfigClass.cpp)*
+
+Le détail subtil — celui qu'on explique en soutenance — est le `if (!hasRoot)`. Pour un booléen comme `autoindex`, `false` voudrait dire à la fois « pas écrit » **et** « écrit `off` » : impossible de distinguer. La solution : chaque champ héritable porte un **drapeau « a été écrit ? »** (`hasRoot`, `hasAutoindex`…), levé par le handler quand la directive apparaît. À la résolution, on n'hérite **que si le drapeau est baissé**. Ensuite, chaque `LocationConfig` est **autonome** : le router n'aura jamais à remonter vers le `server`.
+
+### Les virtual hosts : plusieurs sites, une seule porte
+
+Rien n'interdit à deux blocs `server` d'écouter le **même** `host:port` :
+
+```
+server { listen 8080; server_name localhost;    root ./www;   }
+server { listen 8080; server_name site-b.local; root ./www-b; }
+```
+
+C'est le mécanisme des **virtual hosts** : un seul port physique, plusieurs sites. Lequel répond ? Celui dont le `server_name` correspond au header `Host` de la requête (le premier sert de défaut). Cette **sélection** se fera à la requête, côté HTTP ; pour l'instant, retenez juste que la carte peut porter plusieurs sites sur un même endpoint.
+
+### Le passage de relais
+
+`parse()` rend son `std::vector<ServerConfig>`. `main` le confie au `Server`, et le rideau peut se lever :
+
+```cpp
+Server *serv = new Server(parser.getServers(), epoll);
+```
+
+---
+
 ## Acte 1 — Le serveur s'éveille
 
-Tout commence dans `main.cpp`. Quatre lignes suffisent à donner vie au serveur :
+Une fois la carte lue (acte 0), `main.cpp` donne vie au serveur en quelques lignes :
 
 ```cpp
 Epoll & epoll = Epoll::createEpoll();
-Server *serv = new Server(nbPort, ports, epoll);
+Server *serv = new Server(parser.getServers(), epoll);
 std::signal(SIGINT, epoll.handleSigEvent);
 epoll.addServer(serv);
 epoll.run();
@@ -67,38 +169,52 @@ Epoll::Epoll(void) : _events(MIN_MAX), _active(1)
 
 ### `new Server(...)` — ouvrir les portes
 
-Le `Server` crée les sockets d'écoute. Pour chaque port demandé, un `Socket` est construit, et c'est dans son constructeur que se joue toute la mécanique réseau classique :
+Le `Server` reçoit la **carte** (le `std::vector<ServerConfig>`) et en tire les sockets d'écoute. Il **regroupe par endpoint `host:port`** : plusieurs `server` qui partagent le même endpoint (les virtual hosts de l'acte 0) ne donnent qu'**un seul** socket.
 
 ```cpp
-Socket::Socket(unsigned short int port)
+std::string key = makeKey(host, port);
+std::map<std::string, Socket *>::iterator it = _sockets.find(key);
+if (it != _sockets.end())
 {
+    it->second->addServerConfig(&_configs[i]);
+    continue ;
+}
+Socket *sock = new Socket(host, port);
+sock->addServerConfig(&_configs[i]);
+_sockets.insert(std::make_pair(key, sock));
+sock->start(_epoll);
+```
+
+*(Server/ServerClass.cpp)*
+
+Si l'endpoint existe déjà, on se contente d'**attacher** la config au socket existant (`addServerConfig`) — un virtual host de plus, **sans nouveau `bind`**. Sinon, on construit un `Socket`, et c'est dans son constructeur que se joue la mécanique réseau :
+
+```cpp
+Socket::Socket(std::string const & host, uint16_t port)
+{
+    int opt = 1;
+    _addr.resolve(host, port);
     _sockfd = socket(AF_INET, SOCK_STREAM, 0);
-    if (_sockfd == -1)
-        throw badExec();
-    if (fcntl(_sockfd, F_SETFL, O_NONBLOCK) == -1)
-        throw badExec();
-    _addr.setPort(port);
-    if (bind(_sockfd, (struct sockaddr *)&_addr.getStruct(), sizeof(struct sockaddr)) == -1)
-        throw badExec();
+    ...
+    setsockopt(_sockfd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+    bind(_sockfd, (struct sockaddr *)&_addr.getStruct(), sizeof(struct sockaddr));
     _acceptor.setFD(_sockfd);
-    if (listen(_sockfd, SOMAXCONN) == -1)
-    {
-        close(_sockfd);
-        throw badExec();
-    }
+    listen(_sockfd, SOMAXCONN);
 }
 ```
 
 *(Server/socket/socketClass.cpp)*
 
-C'est la séquence fondatrice de tout serveur réseau :
+La séquence fondatrice de tout serveur réseau (chaque appel est testé, et le FD est fermé avant de relancer en cas d'échec) :
 
-1. **`socket()`** — « donne-moi une prise réseau ». On récupère un FD.
-2. **`fcntl(..., O_NONBLOCK)`** — on la rend **non-bloquante**. C'est capital : sans ça, un `recv` pourrait figer tout le serveur en attendant des données. Avec ça, les appels rendent la main immédiatement.
-3. **`bind()`** — « cette prise écoutera sur ce port ».
-4. **`listen()`** — « accepte les connexions entrantes ». Le port est maintenant ouvert.
+1. **`_addr.resolve(host, port)`** — on traduit `host:port` en adresse via **`getaddrinfo`**. Si le `host` est vide, le drapeau `AI_PASSIVE` donne `0.0.0.0` (toutes les interfaces) ; sinon on bind sur l'interface précise écrite dans la config.
+2. **`socket()`** — « donne-moi une prise réseau ». On récupère un FD.
+3. **`fcntl(..., O_NONBLOCK)`** — on la rend **non-bloquante** : sans ça, un `recv` pourrait figer tout le serveur. Avec ça, les appels rendent la main immédiatement.
+4. **`setsockopt(SO_REUSEADDR)`** — pour **rouvrir le port aussitôt** après un arrêt. Sans ça, il reste coincé en `TIME_WAIT` quelques instants et le redémarrage échoue avec `EADDRINUSE`.
+5. **`bind()`** — « cette prise écoutera sur cette adresse ».
+6. **`listen()`** — « accepte les connexions entrantes ». Le port est ouvert.
 
-Notez `_acceptor.setFD(_sockfd)` : le `Socket` confie le FD d'écoute à son `Acceptor`, qui sera chargé de tout ce qui arrive dessus.
+Deux gestes de plus que pour un socket isolé : `_acceptor.setFD(_sockfd)` confie le FD d'écoute à l'`Acceptor`, et `addServerConfig(...)` lui confie **la liste des `ServerConfig`** de cet endpoint — il s'en servira pour choisir le bon site via le header `Host` quand les requêtes arriveront.
 
 ### `epoll.run()` — entrer dans la danse
 
@@ -538,7 +654,7 @@ Tout ce qu'on vient de raconter est **le moteur**, et il est terminé. Les featu
 - **Le parsing HTTP** prendra place dans `Client::handleRead` : c'est là qu'on accumule déjà les octets dans `_request`. On y mettra une petite machine à états qui décidera *quand* la requête est vraiment complète (ligne de requête, en-têtes, corps), au lieu d'un simple drapeau.
 - **La vraie réponse HTTP** remplacera la génération actuelle, mais partira toujours par `handleWrite`, avec sa mécanique d'envoi partiel inchangée.
 - **Le CGI** sera... **un nouveau `Arole`**. Les tuyaux (`pipe`) d'un programme CGI sont des FD comme les autres : on créera une classe `CgiPipe : public Arole`, on l'enregistrera avec `manager.add(...)`, et le même `epoll` la surveillera. C'est exactement ce que l'abstraction `Arole` a été conçue pour permettre.
-- **Le fichier de configuration** deviendra le point d'entrée et construira les `Server`/`Socket` à la place des arguments actuels.
+- **Le fichier de configuration** est désormais le point d'entrée et construit les `Server`/`Socket` — c'est l'objet de l'**acte 0**. ✅ Fait.
 
 Si vous avez compris les neuf actes, vous avez compris le serveur. Le reste, ce sont des invités qui arrivent à une fête déjà bien organisée.
 
@@ -546,6 +662,7 @@ Si vous avez compris les neuf actes, vous avez compris le serveur. Le reste, ce 
 
 ### Pour réviser en 30 secondes
 
+0. La **config** est lue en premier (acte 0) : lexer → descente récursive → des `ServerConfig`, avec héritage `server`→`location` et virtual hosts sur un même `host:port`.
 1. Un seul `Epoll`, un seul `epoll_wait` : c'est le seul endroit où on attend.
 2. Tout ce qu'on surveille est un `Arole` ; on retrouve le bon objet via `data.ptr` ; on appelle `handle_event` — le polymorphisme fait le tri.
 3. On réagit à **ce qui est prêt** (`events`), jamais à **ce qui nous intéresse** (`_ev.events`).

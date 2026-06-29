@@ -3,8 +3,12 @@
 # include <sys/socket.h>
 # include <netinet/in.h>
 # include <arpa/inet.h>
-# include <strings.h>
+# include <netdb.h>
+# include <string>
+# include <string.h>
+# include <stdint.h>
 # include <ostream>
+# include <exception>
 
 class Sockaddr {
 
@@ -24,6 +28,15 @@ public:
 	in_addr_t const &	getAddr(void) const;
 
 	void			setPort(unsigned int short);
+	void			resolve(std::string const & host, uint16_t port);
+
+	class badAddr : public std::exception {
+		std::string	_msg;
+	public:
+		badAddr(std::string const & msg) throw();
+		virtual ~badAddr(void) throw();
+		virtual const char *	what(void) const throw();
+	};
 };
 
 std::ostream &	operator<<(std::ostream &, Sockaddr const &);

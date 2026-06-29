@@ -11,6 +11,10 @@ SRCS = main.cpp Server/ServerClass.cpp	\
 		Server/AroleClass/AroleClass.cpp \
 		Server/AroleClass/ClientClass.cpp \
 		Server/AroleClass/AcceptorClass.cpp \
+		Config/ServerConfigClass.cpp \
+		Config/LocationConfigClass.cpp \
+		Config/ConfigParserClass.cpp \
+		Config/ConfigParserDirectives.cpp \
 		myzod/safeInputClass.cpp
  
 OBJS = $(SRCS:%.cpp=%.o)
