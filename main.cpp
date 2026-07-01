@@ -2,8 +2,8 @@
 # include <string>
 # include <exception>
 # include <csignal>
-# include "Server/ServerClass.hpp"
 # include "Epoll/epollClass.hpp"
+# include "Server/ServerManagerClass.hpp"
 # include "Config/ConfigParserClass.hpp"
 
 # define DEFAULT_CONFIG "configs/default.conf"
@@ -17,10 +17,10 @@ int	main(int argc, char **argv)
 		parser.parse();
 		std::cout << parser << std::endl;
 		Epoll &		epoll = Epoll::createEpoll();
-		Server *	serv = new Server(parser.getServers(), epoll);
-		std::signal(SIGINT, epoll.handleSigEvent);
-		epoll.addServer(serv);
-		epoll.run();
+		ServerManager	manager(epoll);
+		std::signal(SIGINT, ServerManager::handleSigEvent);
+		manager.build(parser.getServers());
+		manager.run();
 	} catch (std::exception & e) {
 		std::cerr << e.what() << std::endl;
 		return (1);

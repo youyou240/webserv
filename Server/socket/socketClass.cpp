@@ -45,7 +45,7 @@ Socket& Socket::operator=(Socket const & other)
 	return (*this);
 }
 
-void	Socket::addServerConfig(const ServerConfig * cfg) {_acceptor.addServerConfig(cfg);}
+void	Socket::addServer(const Server * srv) {_acceptor.addServer(srv);}
 
 int			Socket::getSockfd(void) const {return(_sockfd);}
 Sockaddr const &	Socket::getAddr(void) const {return(_addr);}

@@ -28,9 +28,14 @@ void	Acceptor::setFD(int fd)
 	_activeClient[_fd];
 }
 
-void	Acceptor::addServerConfig(const ServerConfig * cfg)
+void	Acceptor::addServer(const Server * srv)
 {
-	_configs.push_back(cfg);
+	_vhosts.push_back(srv);
+}
+
+std::vector<const Server*> const &	Acceptor::getServers(void) const
+{
+	return (_vhosts);
 }
 
 unsigned int	Acceptor::getNbClient(void) const

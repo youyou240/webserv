@@ -130,10 +130,10 @@ Pour `autoindex` (un `bool`), `false` signifie à la fois « pas écrit » et «
 
 Deux niveaux distincts :
 
-1. **Bind (socket)** : on **ne peut pas** `bind()` deux fois le même `host:port`. Les `server` partageant un `host:port` se résolvent en **un seul socket en écoute**. Au démarrage, on regroupe les `ServerConfig` par `host:port`.
-2. **Sélection (requête)** : une fois la requête parsée, on lit son header `Host` et, parmi les `ServerConfig` attachés au socket, on choisit celui dont un `server_name` matche. Sinon → **le premier server du port** = *default server*.
+1. **Bind (socket)** : on **ne peut pas** `bind()` deux fois le même `host:port`. Les `server` partageant un `host:port` se résolvent en **un seul socket en écoute**. Au démarrage, le `ServerManager` regroupe les blocs par `host:port`.
+2. **Sélection (requête)** : une fois la requête parsée, on lit son header `Host` et, parmi les **virtual hosts (`Server`)** attachés au socket, on choisit celui dont un `server_name` matche. Sinon → **le premier server du port** = *default server*.
 
-Conséquence sur le moteur : l'`Acceptor` (lié à un socket) devra connaître la **liste** des `ServerConfig` de son port ; le choix se fait au moment du routing.
+Côté moteur : chaque `Socket` (via son `Acceptor`) porte la **liste des `Server`** de son endpoint (`std::vector<const Server*>`) ; le choix se fait au moment du routing. C'est en place (cf. §10).
 
 ---
 
@@ -163,23 +163,28 @@ LocationConfig
     std::vector<std::string>             index;
     std::set<std::string>                methods;               // GET/POST/DELETE
     bool                                 autoindex;
-    std::map<int, std::string>           error_pages;
-    size_t                               client_max_body_size;
-    int                                  redirect_code;         // 0 = pas de return
-    std::string                          redirect_target;
-    bool                                 upload_enabled;
-    std::string                          upload_store;
+    std::map<int, std::string>           errorPages;
+    size_t                               clientMaxBodySize;
+    int                                  redirectCode;          // 0 = pas de return
+    std::string                          redirectTarget;
+    bool                                 uploadEnabled;
+    std::string                          uploadStore;
     std::map<std::string, std::string>   cgi;                   // ".php" -> "/usr/bin/php-cgi"
-    // + flags d'héritage internes au parse (_hasRoot, _hasAutoindex, ...)
+    // flags d'héritage levés au parse :
+    //   hasRoot, hasIndex, hasAutoindex, hasMethods, hasMaxBodySize, hasRedirect
 
 ServerConfig
     std::vector< std::pair<std::string, uint16_t> >  listen;    // host:port
-    std::vector<std::string>             server_names;
+    std::vector<std::string>             serverNames;
     std::string                          root;
     std::vector<std::string>             index;
     bool                                 autoindex;
-    std::map<int, std::string>           error_pages;
-    size_t                               client_max_body_size;
+    std::map<int, std::string>           errorPages;
+    size_t                               clientMaxBodySize;
+    std::set<std::string>                methods;
+    int                                  redirectCode;
+    std::string                          redirectTarget;
+    std::map<std::string, std::string>   cgi;
     std::vector<LocationConfig>          locations;
 ```
 
@@ -187,13 +192,12 @@ Tout est C++98-safe (`std::set/map/pair/vector`, `uint16_t` via `<stdint.h>`).
 
 ---
 
-## 10. Câblage dans le moteur (`main.cpp` → `Server`)
+## 10. Câblage dans le moteur
 
-État actuel : `main.cpp` prend `<nbPort> <ports...>` et `Server` indexe `std::map<port, Socket*>`.
+`main.cpp` : `./webserv [config]` (défaut `configs/default.conf`) → `ConfigParser` produit un `std::vector<ServerConfig>`, passé au `ServerManager`.
 
-Cible :
-1. `main.cpp` : `./webserv [config]` → `ConfigParser` produit un `std::vector<ServerConfig>`.
-2. Regroupement par `host:port` → création d'un `Socket` par couple unique (la map par port existante convient pour `0.0.0.0:port` ; le support multi-interface viendra avec le bind sur adresse précise).
-3. Chaque `Acceptor` reçoit la liste des `ServerConfig` de son port (pont pour le routing par `Host`).
+1. **`ServerManager::build(configs)`** crée **un `Server` par bloc** (chaque `Server` copie sa `ServerConfig`).
+2. Pour chaque `listen` du bloc, **`getOrCreateSocket(host, port)`** : la `map<host:port, Socket*>` du `ServerManager` (propriétaire unique des sockets) **réutilise** le socket de l'endpoint s'il existe, sinon le crée (`getaddrinfo` + `SO_REUSEADDR` + `bind`/`listen`). Les `server` partageant un endpoint tombent donc sur **un seul socket**, sans re-bind.
+3. Chaque `Socket` reçoit, via son `Acceptor`, la liste des **`Server`** (virtual hosts) joignables sur son endpoint (`sock->addServer(srv)`) — base du routing par `Host`.
 
-> Ce câblage est l'étape qui touche le moteur existant ; il est décrit ici mais sera implémenté juste après la validation des structs + parseur.
+> Découpage : `Server` = un bloc config (un virtual host) ; `Epoll` = pur multiplexeur ; `ServerManager` = chef d'orchestre (possède les `Server` + les `Socket`, tient la boucle `run()`). Récit complet dans `ARCHITECTURE.md` (Actes 0-1).

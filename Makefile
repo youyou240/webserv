@@ -5,6 +5,7 @@ NAME = Webserv
 CPPFLAGS = -Wall -Wextra -Werror -g3 -std=c++98
 
 SRCS = main.cpp Server/ServerClass.cpp	\
+		Server/ServerManagerClass.cpp \
 		Server/socket/socketClass.cpp \
 		Server/socket/sockaddrClass.cpp \
 		Epoll/epollClass.cpp	\

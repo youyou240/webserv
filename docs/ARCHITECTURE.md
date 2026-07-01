@@ -10,11 +10,13 @@
 
 Avant de lever le rideau, présentons les acteurs. Ils sont peu nombreux, et c'est voulu.
 
-- **`Epoll`** *(Epoll/epollClass.cpp)* — le chef d'orchestre. Il y en a **un seul** dans tout le programme. C'est lui qui attend que quelque chose se passe et qui prévient le bon acteur.
+- **`Epoll`** *(Epoll/epollClass.cpp)* — le **multiplexeur** d'I/O. Il y en a **un seul**. Il attend que des FD soient prêts (`epoll_wait`) et expose `add`/`mod`/`del`. Il ne connaît ni la config ni les sockets — juste les FD à surveiller.
+- **`ServerManager`** *(Server/ServerManagerClass.cpp)* — le **chef d'orchestre**. Il possède les `Server` (blocs config) et les `Socket` (endpoints), construit la topologie (`build`), tient la boucle d'événements (`run`) en s'appuyant sur l'`Epoll`, et le menu d'admin.
 - **`Arole`** *(Server/AroleClass/AroleClass.cpp)* — une **classe abstraite**. Elle dit : « tout objet surveillé par `Epoll` doit savoir réagir à son propre événement ». Elle ne sait pas *comment*, elle impose juste le contrat.
 - **`Acceptor`** *(Server/AroleClass/AcceptorClass.cpp)* — un `Arole` concret. Sa seule mission : **accepter les nouvelles connexions** sur un port.
 - **`Client`** *(Server/AroleClass/ClientClass.cpp)* — un autre `Arole` concret. Il représente **un visiteur connecté** : il lit ce qu'on lui envoie, il répond, puis il s'en va.
-- **`Socket`** *(Server/socket/socketClass.cpp)* et **`Server`** *(Server/ServerClass.cpp)* — la logistique : ouvrir les ports, en gérer plusieurs.
+- **`Socket`** *(Server/socket/socketClass.cpp)* — un **endpoint** d'écoute (un `host:port`, un `bind`/`listen`). Possédé par l'`Epoll`.
+- **`Server`** *(Server/ServerClass.cpp)* — **un bloc `server` du fichier de config** (un virtual host) : il porte sa `ServerConfig` et vit sur un ou plusieurs endpoints.
 - **`ConfigParser`** *(Config/ConfigParserClass.cpp)* — le cartographe. Il lit le fichier de configuration et en tire une carte que tout le reste va suivre.
 - **`ServerConfig` / `LocationConfig`** *(Config/ServerConfigClass.cpp, Config/LocationConfigClass.cpp)* — la carte elle-même : des sacs de données décrivant chaque site et chacune de ses routes.
 
@@ -116,10 +118,10 @@ C'est le mécanisme des **virtual hosts** : un seul port physique, plusieurs sit
 
 ### Le passage de relais
 
-`parse()` rend son `std::vector<ServerConfig>`. `main` le confie au `Server`, et le rideau peut se lever :
+`parse()` rend son `std::vector<ServerConfig>`. `main` le confie à un **`ServerManager`**, qui construit **un `Server` par bloc** et les **sockets partagés** — le rideau peut se lever :
 
 ```cpp
-Server *serv = new Server(parser.getServers(), epoll);
+manager.build(parser.getServers());
 ```
 
 ---
@@ -130,10 +132,10 @@ Une fois la carte lue (acte 0), `main.cpp` donne vie au serveur en quelques lign
 
 ```cpp
 Epoll & epoll = Epoll::createEpoll();
-Server *serv = new Server(parser.getServers(), epoll);
-std::signal(SIGINT, epoll.handleSigEvent);
-epoll.addServer(serv);
-epoll.run();
+ServerManager manager(epoll);
+std::signal(SIGINT, ServerManager::handleSigEvent);
+manager.build(parser.getServers());
+manager.run();
 ```
 
 Suivons-les une par une.
@@ -167,27 +169,43 @@ Epoll::Epoll(void) : _events(MIN_MAX), _active(1)
 
 `epoll_create` renvoie un **descripteur de fichier** (`_fd`) qui représente « la liste des choses que je surveille ». `_events` est un tableau qui servira de boîte aux lettres : c'est là que le noyau déposera les événements quand il y en aura.
 
-### `new Server(...)` — ouvrir les portes
+### `manager.build(...)` — ouvrir les portes
 
-Le `Server` reçoit la **carte** (le `std::vector<ServerConfig>`) et en tire les sockets d'écoute. Il **regroupe par endpoint `host:port`** : plusieurs `server` qui partagent le même endpoint (les virtual hosts de l'acte 0) ne donnent qu'**un seul** socket.
+`main` confie la carte au `ServerManager`. Pour **chaque bloc** `server` du config, on crée **un objet `Server`** (un virtual host), possédé par le `ServerManager`. Puis, pour chacun de ses `listen`, on récupère le socket de l'endpoint et on s'y enregistre :
 
 ```cpp
-std::string key = makeKey(host, port);
-std::map<std::string, Socket *>::iterator it = _sockets.find(key);
-if (it != _sockets.end())
+Server *srv = new Server(configs[i]);
+addServer(srv);
+for (chaque (host, port) de configs[i].listen)
 {
-    it->second->addServerConfig(&_configs[i]);
-    continue ;
+    Socket *sock = getOrCreateSocket(host, port);
+    sock->addServer(srv);
 }
-Socket *sock = new Socket(host, port);
-sock->addServerConfig(&_configs[i]);
-_sockets.insert(std::make_pair(key, sock));
-sock->start(_epoll);
 ```
 
-*(Server/ServerClass.cpp)*
+*(Server/ServerManagerClass.cpp)*
 
-Si l'endpoint existe déjà, on se contente d'**attacher** la config au socket existant (`addServerConfig`) — un virtual host de plus, **sans nouveau `bind`**. Sinon, on construit un `Socket`, et c'est dans son constructeur que se joue la mécanique réseau :
+Le cœur, c'est `getOrCreateSocket`. Le `ServerManager` tient une `std::map<host:port, Socket*>` qui est l'**unique propriétaire** des sockets. Si l'endpoint existe déjà, on **réutilise** le socket ; sinon on en crée un :
+
+```cpp
+std::map<std::string, Socket*>::iterator it = _sockets.find(key);
+if (it != _sockets.end())
+    return (it->second);
+Socket *sock = new Socket(host, port);
+_sockets.insert(std::make_pair(key, sock));
+sock->start(*this);
+return (sock);
+```
+
+*(Server/ServerManagerClass.cpp)*
+
+C'est ainsi que les **virtual hosts** (acte 0) se résolvent : deux blocs `server` sur `0.0.0.0:8080` tombent sur le **même** `Socket` ; le second fait juste `sock->addServer(srv)` pour s'ajouter à la liste des sites de cet endpoint — **sans nouveau `bind`**. La séparation des rôles est nette :
+
+- le **`ServerManager`** possède les `Server` (les blocs config) **et** les `Socket` (les endpoints) ;
+- l'**`Epoll`** ne possède rien de tout ça : il surveille juste les FD ;
+- un **`Server`** ne possède aucun socket : il vit sur les endpoints où il écoute, et l'`Acceptor` de chaque endpoint garde la liste des `Server` (via `addServer`) pour choisir le bon site selon le header `Host`.
+
+Quand on crée vraiment un `Socket`, c'est dans son constructeur que se joue la mécanique réseau :
 
 ```cpp
 Socket::Socket(std::string const & host, uint16_t port)
@@ -205,18 +223,17 @@ Socket::Socket(std::string const & host, uint16_t port)
 
 *(Server/socket/socketClass.cpp)*
 
-La séquence fondatrice de tout serveur réseau (chaque appel est testé, et le FD est fermé avant de relancer en cas d'échec) :
+La séquence fondatrice (chaque appel est testé, FD fermé avant de relancer en cas d'échec) :
 
-1. **`_addr.resolve(host, port)`** — on traduit `host:port` en adresse via **`getaddrinfo`**. Si le `host` est vide, le drapeau `AI_PASSIVE` donne `0.0.0.0` (toutes les interfaces) ; sinon on bind sur l'interface précise écrite dans la config.
-2. **`socket()`** — « donne-moi une prise réseau ». On récupère un FD.
-3. **`fcntl(..., O_NONBLOCK)`** — on la rend **non-bloquante** : sans ça, un `recv` pourrait figer tout le serveur. Avec ça, les appels rendent la main immédiatement.
-4. **`setsockopt(SO_REUSEADDR)`** — pour **rouvrir le port aussitôt** après un arrêt. Sans ça, il reste coincé en `TIME_WAIT` quelques instants et le redémarrage échoue avec `EADDRINUSE`.
-5. **`bind()`** — « cette prise écoutera sur cette adresse ».
-6. **`listen()`** — « accepte les connexions entrantes ». Le port est ouvert.
+1. **`_addr.resolve(host, port)`** — traduit `host:port` en adresse via **`getaddrinfo`** ; host vide → `AI_PASSIVE` → `0.0.0.0` (toutes les interfaces), sinon l'interface précise écrite dans la config.
+2. **`socket()`** — une prise réseau, on récupère un FD.
+3. **`fcntl(..., O_NONBLOCK)`** — non-bloquante : sans ça, un `recv` pourrait figer tout le serveur.
+4. **`setsockopt(SO_REUSEADDR)`** — pour **rouvrir le port aussitôt** après un arrêt (sinon il reste en `TIME_WAIT` et le redémarrage échoue avec `EADDRINUSE`).
+5. **`bind()`** puis **`listen()`** — le port est ouvert.
 
-Deux gestes de plus que pour un socket isolé : `_acceptor.setFD(_sockfd)` confie le FD d'écoute à l'`Acceptor`, et `addServerConfig(...)` lui confie **la liste des `ServerConfig`** de cet endpoint — il s'en servira pour choisir le bon site via le header `Host` quand les requêtes arriveront.
+Enfin `_acceptor.setFD(_sockfd)` confie le FD d'écoute à l'`Acceptor`, qui sera chargé de tout ce qui arrive dessus.
 
-### `epoll.run()` — entrer dans la danse
+### `manager.run()` — entrer dans la danse
 
 Le serveur est armé, les ports sont ouverts. Mais personne ne surveille encore rien. C'est le rôle de `run()`. On y arrive à l'acte suivant — mais avant, il faut que les `Acceptor` se signalent à l'`Epoll`. Ça se fait via `Socket::start` :
 
@@ -289,23 +306,22 @@ void Epoll::add(Arole * role)
 Voici le cœur battant du serveur, la boucle d'événements :
 
 ```cpp
-void Epoll::run(void)
+void ServerManager::run(void)
 {
-    std::cout << *this << std::endl;
     while (this->_active)
     {
         if (isRunning)
         {
-            int num_events = wait();
+            int num_events = _epoll.wait();
+            std::vector<struct epoll_event> const & events = _epoll.getEvents();
             for (int i = 0; i < num_events; ++i)
             {
-                Arole *role = static_cast<Arole *>(_events[i].data.ptr);
+                Arole *role = static_cast<Arole *>(events[i].data.ptr);
                 if (role == NULL)
                     continue ;
-                role->handle_event(*this, _events[i].events);
+                role->handle_event(_epoll, events[i].events);
             }
-            Arole::launchActiveRoutine(*this);
-            show();
+            Arole::launchActiveRoutine(_epoll);
         }
         else
             sigManager();
@@ -313,7 +329,9 @@ void Epoll::run(void)
 }
 ```
 
-*(Epoll/epollClass.cpp)*
+*(Server/ServerManagerClass.cpp)*
+
+La boucle vit dans le `ServerManager`, mais elle **délègue le sommeil** à l'`Epoll` : `_epoll.wait()` est le seul `epoll_wait` du programme, et `getEvents()` expose le tampon rempli par le noyau.
 
 Décortiquons le moment le plus important : `wait()`.
 
@@ -620,14 +638,14 @@ Dernière scène. Que se passe-t-il si on fait `Ctrl-C` ? Sur la plupart des pro
 ```cpp
 volatile sig_atomic_t isRunning = 1;
 
-void Epoll::handleSigEvent(int signum)
+void ServerManager::handleSigEvent(int signum)
 {
     (void)signum;
     isRunning = 0;
 }
 ```
 
-*(Epoll/epollClass.cpp)*
+*(Server/ServerManagerClass.cpp)*
 
 Le handler de signal ne fait **qu'une** chose : mettre le drapeau `isRunning` à `0`. (Le type `volatile sig_atomic_t` est le seul qu'on a le droit de modifier en toute sécurité depuis un handler de signal — c'est une règle du langage.)
 

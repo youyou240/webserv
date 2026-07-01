@@ -17,7 +17,7 @@
 # include "../AroleClass/AroleClass.hpp"
 
 class Epoll;
-struct ServerConfig;
+class Server;
 
 class Socket {
 
@@ -37,7 +37,7 @@ public:
 	Sockaddr const &	getAddr(void) const;
 	Acceptor const &	getAcceptor(void) const;
 
-	void		addServerConfig(const ServerConfig * cfg);
+	void		addServer(const Server * srv);
 
 	void 		start(Epoll &);
 	void 		stop(Epoll &);

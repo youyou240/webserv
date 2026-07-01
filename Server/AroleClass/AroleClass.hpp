@@ -15,7 +15,7 @@
 
 class Client;
 class Epoll;
-struct ServerConfig;
+class Server;
 
 class Arole {
 
@@ -48,7 +48,7 @@ public:
 class Acceptor : public Arole {
 
 	bool					_active;
-	std::vector<const ServerConfig*>	_configs;
+	std::vector<const Server*>		_vhosts;
 public:
 
 	Acceptor(void);
@@ -60,7 +60,8 @@ public:
 	unsigned int	getNbClient(void) const;
 
 	void		setFD(int);
-	void		addServerConfig(const ServerConfig * cfg);
+	void		addServer(const Server * srv);
+	std::vector<const Server*> const &	getServers(void) const;
 
 	void		start(Epoll &);
 	void		closeAll(Epoll &);
