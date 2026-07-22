@@ -165,16 +165,16 @@ Epoll & Epoll::createEpoll(void) { static Epoll epoll; return epoll; }
 
 **Comment.** `ServerManager` possède une `map<host:port, Socket*>` (**propriétaire unique** des sockets). `getOrCreateSocket` **déduplique** : deux blocs `server` sur le même `host:port` réutilisent le **même** `Socket` (pas de re-`bind`), et chacun s'ajoute à la liste de virtual hosts de l'`Acceptor` de cet endpoint. `SO_REUSEADDR` avant `bind` pour rouvrir un port aussitôt. **Référence : `ARCHITECTURE.md` acte 1.**
 
-## C.3 — Méthodes GET, POST, DELETE 🟡
+## C.3 — Méthodes GET, POST, DELETE ✅
 
 **Exigence.** Au minimum ces trois méthodes.
 
 **État.**
-- **GET** ✅ — servi par `Router::handleGet` (cf. C.4).
-- **POST / upload** ⬜ — actuellement `501` (branche non-GET de `Router::run`). Partie C.7.
-- **DELETE** ⬜ — actuellement `501`. Partie C.8.
+- **GET** ✅ — `Router::handleGet` (cf. C.4).
+- **POST / upload** ✅ — `Router::handlePost` + `Router/Upload` (cf. C.5).
+- **DELETE** ✅ — `Router::handleDelete` (cf. C.8).
 
-Le **parseur** accepte déjà GET/POST/DELETE (et rejette tout autre en `501`). Le **routing** distingue « méthode interdite sur cette route » (`405` + `Allow`) de « méthode connue mais handler pas écrit » (`501` temporaire). **Référence : `ROUTING.md` §2.**
+Le **parseur** accepte GET/POST/DELETE (et rejette tout autre en `501`). Le **routing** distingue « méthode interdite sur cette route » (`405` + `Allow`) de « méthode inconnue » (`501`, parseur). **Référence : `ROUTING.md` §2.**
 
 ## C.4 — Servir un site statique complet ✅
 
@@ -184,13 +184,15 @@ Le **parseur** accepte déjà GET/POST/DELETE (et rejette tout autre en `501`). 
 
 **Comment.** `Router` : matching `location` **longest-prefix** (frontière stricte sur `/`), mapping `root` de type **alias** (préfixe de location retiré, conforme à l'exemple `/kapouet`→`/tmp/www` du sujet), résolution `index`, lecture fichier (`stat`/`open`/`read`/`close`), `Content-Type` via `Router/MimeTypes`. Anti-traversal lexical. **Référence : `ROUTING.md` (tout le doc) + arbo de test `www/`.**
 
-## C.5 — Upload de fichiers par les clients ⬜
+## C.5 — Upload de fichiers par les clients ✅
 
 **Exigence.** Le client peut uploader ; dossier de stockage configuré (`upload_store`).
 
 **Pourquoi.** Feature notée ; c'est la partie la plus fastidieuse de POST.
 
-**À faire.** Parser le corps `multipart/form-data` (lire le `boundary`, découper les parties, extraire `filename`), écrire dans `upload_store` de la location, répondre `201 Created`. Gérer `Expect: 100-continue` (émettre `HTTP/1.1 100 Continue\r\n\r\n` quand les headers passent les checks — le refus anticipé 413 marche déjà). **Point d'insertion : branche non-GET de `Router::run` (aujourd'hui `501`).** Le dé-chunking est déjà fait par le parseur. **Référence : `HTTP_REQUESTS.md` §10 (multipart) et §6 (100-continue).**
+**Comment.** `Router::handlePost` → `Router/Upload`. Deux formats : **`multipart/form-data`** (extraction du `boundary`, découpage des parties, écriture de chaque partie avec un `filename` dans `upload_store`) et **corps brut** (nom depuis le dernier segment de l'URL, ou généré). `201 Created` avec la liste des fichiers ; `500` sur échec d'écriture ; `400` sur multipart malformé ; `403` si POST sur une location sans `upload_store`. Le corps est déjà assemblé/dé-chunké par le parseur. **Sécurité : `sanitizeFilename`** ne garde que le basename → l'upload ne peut pas sortir de `upload_store` (traversal via `filename`, cf. `SECURITY.md` §3). **Référence : `ROUTING.md` §6bis, `HTTP_REQUESTS.md` §10.**
+
+**`Expect: 100-continue` ✅.** Émis dès `headersDone` quand les checks passent (et `HTTP/1.1`, et pas d'erreur/413) : `Client::handleRead` pose `_response = "HTTP/1.1 100 Continue\r\n\r\n"` et bascule en `EPOLLOUT` ; une fois envoyé (`_sendingContinue`), `handleWrite` **ne ferme pas et ne reset pas** — il repasse en `EPOLLIN` pour lire le corps, puis flux normal. Le refus anticipé `413` (sans 100) marche toujours. **Référence : `HTTP_REQUESTS.md` §6.**
 
 ## C.6 — Codes de statut HTTP exacts 🟡
 
@@ -200,27 +202,28 @@ Le **parseur** accepte déjà GET/POST/DELETE (et rejette tout autre en `501`). 
 
 **État — déjà émis :**
 - Parseur : `400`, `413`, `414`, `501`, `505` (cf. `HTTP_REQUESTS.md` §17.10).
-- Router : `200`, `301/302`, `403`, `404`, `405`(+`Allow`), `500` (vhost nul), `501` (handler manquant).
+- Router : `200`, `201` (upload), `204` (DELETE), `301/302`, `403`, `404`, `405`(+`Allow`), `500` (vhost nul).
+- Intermédiaire : `100 Continue`.
 
-**Manque (⬜) :** `201` (après upload), `204` (après DELETE), `504` (timeout — aujourd'hui on **ferme** la connexion sans réponse ; à décider si on émet un `504`), les `error_page` **custom**. **Référence : `HTTP_REQUESTS.md` §12.**
+**Manque (⬜) :** `504` (timeout — aujourd'hui on **ferme** la connexion sans réponse ; à décider si on émet un `504`, notamment pour le CGI). Les `error_page` custom sont faits (C.11). **Référence : `HTTP_REQUESTS.md` §12.**
 
-## C.7 — POST + upload ⬜
+## C.7 — POST + upload ✅
 
-Voir **C.5** (même chantier).
+Voir **C.5** (même chantier, `Expect: 100-continue` inclus).
 
-## C.8 — DELETE ⬜
+## C.8 — DELETE ✅
 
 **Exigence.** Supprimer une ressource.
 
-**À faire.** Résoudre le chemin (déjà fait par `resolveFsPath`), `unlink`, répondre `204` (ou `200`), `404`/`403` sinon. **Point d'insertion : branche non-GET de `Router::run`.**
+**Comment.** `Router::handleDelete` réutilise le `fsPath` résolu (donc l'anti-traversal de `resolveFsPath`) : `stat` absent → `404`, dossier → `403` (on ne supprime pas un répertoire), sinon `std::remove` → **`204 No Content`** (échec droits → `403`). **Contrainte fonctions autorisées :** `unlink` **n'est pas** dans la liste fermée du sujet → on utilise `std::remove` (`<cstdio>`, standard C++) ; **à valider avec l'évaluateur**. **Référence : `ROUTING.md` §6ter.**
 
-## C.9 — Directory listing (autoindex) 🟡
+## C.9 — Directory listing (autoindex) ✅
 
 **Exigence.** Listing on/off + fichier `index` par défaut quand la ressource est un dossier.
 
-**État.** La **résolution `index`** est faite (`handleGet` essaie les fichiers `index` dans l'ordre). Le **listing** manque : un dossier sans index renvoie `403` pour l'instant.
+**Pourquoi.** Sans index ET avec `autoindex on`, un serveur affiche le contenu du dossier — pratique et attendu par l'éval. `off` doit au contraire **refuser** (`403`), ne pas divulguer l'arborescence.
 
-**À faire.** Dans la branche « aucun index trouvé » de `handleGet` : si `autoindex on`, générer une page HTML de listing (`opendir`/`readdir`/`closedir`) ; si `off`, garder `403`. **Point d'insertion clairement isolé.** **Référence : `ROUTING.md` §6 et §8.**
+**Comment.** `handleGet` : sur un dossier, on tente les `index` dans l'ordre ; si aucun n'existe **et** `autoindex on` → `Router::autoIndex` génère la page HTML (`opendir`/`readdir`/`closedir`, chaque entrée `stat`ée pour suffixer les dossiers d'un `/`, liens construits sur l'URL de la requête). **`index` est prioritaire sur `autoindex`** (comme NGINX). `autoindex off` sans index → `403`. **Sécurité : les noms de fichiers sont HTML-échappés** (`htmlEscape`) pour empêcher une XSS via un nom de fichier piégé (`<script>…`). **Référence : `ROUTING.md` §6.**
 
 ## C.10 — Redirection HTTP (301/302) ✅
 
@@ -228,13 +231,13 @@ Voir **C.5** (même chantier).
 
 **Comment.** `Router::makeRedirect` : `status = redirectCode`, header `Location: redirectTarget`, body vide. **Court-circuite** méthode et fichier (comme le `return` de NGINX) — testé sur `location /old`. **Référence : `ROUTING.md` §7 et §9.8.**
 
-## C.11 — Pages d'erreur par défaut 🟡
+## C.11 — Pages d'erreur (défaut + custom) ✅
 
 **Exigence.** Pages d'erreur par défaut si non fournies + `error_page` custom.
 
-**État.** Pages **par défaut** servies via `HttpResponse::defaultErrorPage` (style NGINX), centralisées dans `Router::makeError`. **`error_page` custom** pas encore branché.
+**Pourquoi.** Un serveur doit toujours renvoyer une page d'erreur lisible ; et permettre de la personnaliser par config.
 
-**À faire.** Dans `Router::makeError` : si `_config.errorPages` contient le code, lire le fichier déclaré et le servir ; sinon retomber sur la page par défaut. Fichiers d'exemple déjà fournis : `www/errors/404.html`, `www/errors/5xx.html`. **Point d'insertion unique.** **Référence : `ROUTING.md` §7.**
+**Comment.** `Router::makeError` (point **unique** par où passent toutes les erreurs du Router) : si `_config.errorPages` contient le code, il résout le chemin de la page contre le **root du server** (`error_page 404 /errors/404.html` + `root ./www` → `./www/errors/404.html`) et la sert ; **fallback** sur `HttpResponse::defaultErrorPage(code)` (style NGINX) si le fichier custom est absent/illisible ou si aucune page n'est déclarée. Pas de récursion (le fallback n'appelle pas `makeError`). Fichiers d'exemple : `www/errors/404.html`, `www/errors/5xx.html`. **Limite connue :** résolution au niveau **server**, pas encore par location. **Référence : `ROUTING.md` §7.**
 
 ## C.12 — Compatible navigateur standard 🟡
 
@@ -264,17 +267,17 @@ Voir **A.10** et `ARCHITECTURE.md` acte 8.
 |---|---|---|---|
 | `listen` (interface:port, multi) | server | ✅ | `ConfigParser` + `ServerManager` (C.2) |
 | `server_name` (virtual hosts) | server | ✅ | `Client::selectVhost` par `Host` |
-| `error_page` | server/loc | 🟡 | modèle ✅, service custom ⬜ (C.11) |
-| `client_max_body_size` | server/loc | 🟡 | server ✅, **par location** ⬜ (voir note) |
+| `error_page` | server/loc | ✅ | `Router::makeError` (custom + fallback), niveau server |
+| `client_max_body_size` | server/loc | ✅ | `Client::resolveMaxBodySize` → `Router::matchLocation` |
 | `methods` (méthodes acceptées) | location | ✅ | `Router::run` → `405`+`Allow` |
 | `return` (redirection) | location | ✅ | `Router::makeRedirect` (C.10) |
 | `root` (mapping URL→dossier, alias) | server/loc | ✅ | `Router::resolveFsPath` (C.4) |
-| `autoindex` (on/off) | server/loc | 🟡 | modèle ✅, listing ⬜ (C.9) |
+| `autoindex` (on/off) | server/loc | ✅ | `Router::autoIndex` (listing HTML) / `403` si off |
 | `index` (fichier par défaut) | server/loc | ✅ | `Router::handleGet` |
-| `upload_store` (dossier upload) | location | ⬜ | modèle ✅, upload ⬜ (C.5) |
+| `upload_store` (dossier upload) | location | ✅ | `Router::handlePost` → `Router/Upload` |
 | `cgi` (par extension) | location | ⬜ | modèle ✅, exécution ⬜ (E) |
 
-**Note `client_max_body_size` par location.** La limite appliquée est celle du **server** (`resolveMaxBodySize` via `selectVhost`). Le raffinement par location bute sur un **problème de timing** : la limite doit être posée dès `headersDone()` (avant de lire le body), or le `Router` ne matche la location qu'à requête **complète**. Solution prévue : matcher la location plus tôt (réutiliser `Router::matchLocation` côté `Client::handleRead`). **Référence : `HTTP_REQUESTS.md` §17.9.**
+**Note `client_max_body_size` par location.** ✅ Résolu. Le « problème de timing » (la limite doit être posée dès `headersDone`, avant de lire le body) est levé en matchant la location **tôt** : `Client::resolveMaxBodySize` appelle `Router::matchLocation(cfg, path)` — le path est disponible dès la request line, donc avant les headers. Un upload vers `/uploads` bénéficie bien de sa limite `10m`, pas du `1m` du server. **Référence : `HTTP_REQUESTS.md` §17.9.**
 
 ---
 
@@ -319,18 +322,18 @@ Voir **A.10** et `ARCHITECTURE.md` acte 8.
 | B | Lancement + Makefile | ✅ |
 | C.1 | Parser la config | ✅ |
 | C.2 | Multi interface:port | ✅ |
-| C.3 | GET / POST / DELETE | 🟡 (GET ✅) |
+| C.3 | GET / POST / DELETE | ✅ |
 | C.4 | Site statique | ✅ |
-| C.5 | Upload | ⬜ |
-| C.6 | Codes de statut exacts | 🟡 |
-| C.8 | DELETE | ⬜ |
-| C.9 | Directory listing | 🟡 (index ✅) |
+| C.5 | Upload (+ 100-continue) | ✅ |
+| C.6 | Codes de statut exacts | 🟡 (manque `504`) |
+| C.8 | DELETE | ✅ |
+| C.9 | Directory listing | ✅ |
 | C.10 | Redirection | ✅ |
-| C.11 | Pages d'erreur | 🟡 (défaut ✅) |
+| C.11 | Pages d'erreur | ✅ |
 | C.14 | Timeouts + déconnexions | ✅ |
 | C.15 | Tests de stress | ⬜ |
 | D | Directives config | 🟡 |
 | E | CGI | ⬜ |
 | F.1 | README | ⬜ |
 
-**Prochaine étape naturelle** (cf. roadmap CLAUDE.md §8) : autoindex (C.9) et pages d'erreur custom (C.11) sont les deux plus petits restants et complètent le statique ; puis POST/upload (C.5) et DELETE (C.8) ; le CGI (E) en dernier, isolé.
+**GET, POST/upload, DELETE, redirections, autoindex, pages d'erreur, 100-continue : faits.** Il ne reste plus, côté mandatory, que le **CGI** (Partie E — le gros morceau, isolé), puis le **README** (F.1) et les **tests de stress** (C.15). Le code de statut `504` (timeout) est à trancher, surtout au moment du CGI.

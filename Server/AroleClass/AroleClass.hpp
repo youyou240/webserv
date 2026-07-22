@@ -89,6 +89,8 @@ class Client : public Arole {
 	bool		_draining;
 	bool		_closeAfterWrite;
 	bool		_limitApplied;
+	bool		_continueHandled;
+	bool		_sendingContinue;
 
 	time_t		_lastActivity;
 	time_t		_requestStart;
@@ -97,6 +99,7 @@ class Client : public Arole {
 
 	const Server *	selectVhost(void) const;
 	size_t		resolveMaxBodySize(void) const;
+	bool		wantsContinue(void) const;
 
 public:
 

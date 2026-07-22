@@ -126,7 +126,7 @@ Quand un client doit envoyer un gros corps, il peut ajouter `Expect: 100-continu
 
 Observé en test réel (16/07/2026, POST de 2 Mo avec `client_max_body_size 1m`) : notre serveur vérifie la limite sur le `Content-Length` **dès les headers** et répond `413` immédiatement → curl, qui attendait le feu vert, **n'a jamais envoyé les 2 Mo**. Zéro octet de body transféré pour rien : c'est le comportement optimal, et il marche « gratuitement » grâce au check anticipé.
 
-Ce qui manque encore (prévu avec l'upload, cf. roadmap CLAUDE.md §8) : quand la requête est **acceptable**, un serveur conforme doit répondre `100 Continue` pour débloquer le client tout de suite — sans ça, curl attend son délai de grâce (~1s de latence ajoutée) avant d'envoyer le corps quand même. À implémenter : si `Expect: 100-continue` et que les checks des headers passent, émettre la ligne `HTTP/1.1 100 Continue\r\n\r\n` puis continuer à lire le corps normalement (c'est une réponse **intermédiaire** : la vraie réponse vient après).
+L'autre moitié — répondre `100 Continue` quand la requête est **acceptable** — est désormais **implémentée** (côté `Client`, cf. `ROUTING.md` §8 et CLAUDE.md §8). Dès que les headers sont finis et passent les checks (version `HTTP/1.1`, pas d'erreur ni `413`), `Client::handleRead` émet la ligne intermédiaire `HTTP/1.1 100 Continue\r\n\r\n` via `EPOLLOUT` ; une fois envoyée, on **repasse en lecture** (`EPOLLIN`) pour le corps sans fermer ni reset la connexion — le client est débloqué tout de suite (plus de délai de grâce ~1s). C'est une réponse **intermédiaire** : la vraie réponse (`201`…) vient après le corps. Le refus anticipé `413` (sans `100`) reste inchangé.
 
 ---
 
@@ -518,7 +518,7 @@ Le résultat : `_body` contient le corps **assemblé et dé-chunké**. Le reste 
 Il y a un problème d'œuf et de poule : la limite (`client_max_body_size`) dépend du **site visé**, donc du header `Host`… qu'on ne connaît qu'une fois les headers parsés. Impossible de donner la bonne limite au parseur à sa naissance. La solution en deux temps :
 
 1. Le parseur naît avec `_maxBodySize = NO_BODY_LIMIT` (`(size_t)-1`, « pas encore de limite »).
-2. Dès que `headersDone()` passe à vrai, le `Client` choisit le virtual host via `Host` et appelle `setMaxBodySize(la vraie limite)` — qui **revalide rétroactivement** :
+2. Dès que `headersDone()` passe à vrai, le `Client` choisit le virtual host via `Host`, **matche la location** (`Router::matchLocation`, le path étant connu dès la request line) et appelle `setMaxBodySize(la vraie limite)` — la limite est donc **celle de la location** (ex. `10m` sur `/uploads`), avec repli sur celle du server. Elle **revalide rétroactivement** :
 
 ```cpp
 void HttpRequest::setMaxBodySize(size_t limit)

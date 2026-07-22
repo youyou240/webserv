@@ -20,6 +20,7 @@ SRCS = main.cpp Server/ServerClass.cpp	\
 		Http/HttpResponseClass.cpp \
 		Router/RouterClass.cpp \
 		Router/MimeTypesClass.cpp \
+		Router/UploadClass.cpp \
 		myzod/safeInputClass.cpp
  
 OBJS = $(SRCS:%.cpp=%.o)

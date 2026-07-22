@@ -16,10 +16,12 @@ class Router {
 	Router(Router const &);
 	Router &	operator=(Router const &);
 
-	LocationConfig const *	matchLocation(void) const;
 	bool			resolveFsPath(LocationConfig const & loc, std::string & out) const;
 	HttpResponse		handleGet(LocationConfig const & loc, std::string const & fsPath) const;
+	HttpResponse		handlePost(LocationConfig const & loc) const;
+	HttpResponse		handleDelete(std::string const & fsPath) const;
 	HttpResponse		serveFile(std::string const & fsPath) const;
+	HttpResponse		autoIndex(std::string const & fsPath) const;
 	HttpResponse		makeRedirect(LocationConfig const & loc) const;
 	HttpResponse		makeError(int code) const;
 
@@ -29,4 +31,6 @@ public:
 	~Router(void);
 
 	HttpResponse	run(void);
+
+	static LocationConfig const *	matchLocation(ServerConfig const & config, std::string const & path);
 };

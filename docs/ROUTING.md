@@ -56,7 +56,7 @@ L'ordre n'est pas arbitraire :
 2. **Redirection d'abord** : une `location` avec `return 301 …` court-circuite tout le reste — comme NGINX, une redirection ne dépend ni de la méthode ni de l'existence d'un fichier.
 3. **Méthode** ensuite : si elle n'est pas dans la liste autorisée de la location → `405` **avec le header `Allow`** (obligatoire : il annonce au client les méthodes acceptées).
 4. **Résolution du chemin disque** : échoue si tentative de traversal (§5) → `403`.
-5. **Dispatch par méthode** : `GET` est traité ; `POST`/`DELETE` (autorisés par la config mais pas encore implémentés) renvoient `501` **temporairement** — ces branches deviendront l'upload et la suppression (phases à venir).
+5. **Dispatch par méthode** : `GET` → service statique ; `POST` → `handlePost` (upload, §6bis) ; **`DELETE` → `handleDelete` (§6ter)**.
 
 ---
 
@@ -153,9 +153,20 @@ HttpResponse	Router::handleGet(LocationConfig const & loc, std::string const & f
 *(Router/RouterClass.cpp)*
 
 - **`stat` échoue** → `404` (la ressource n'existe pas).
-- **Dossier** → on essaie les fichiers `index` de la config, dans l'ordre (`index index.html index.htm`). Le premier qui est un vrai fichier est servi. Aucun ? → `403` **pour l'instant** : c'est exactement le point où l'**autoindex** (directory listing) viendra se brancher (`autoindex on` → générer la page ; `off` → `403`).
+- **Dossier** → on essaie les fichiers `index` de la config, dans l'ordre (`index index.html index.htm`). Le premier qui est un vrai fichier est servi. Aucun ? → **si `autoindex on`, on génère le listing** (`autoIndex`, cf. ci-dessous) ; sinon → `403`.
 - **Fichier régulier** → servi.
 - **Autre chose** (device, socket…) → `404`.
+
+> **`index` a la priorité sur `autoindex`** (comme NGINX) : si un fichier `index` existe dans le dossier, il est servi même quand `autoindex on`. Le listing n'apparaît que **faute d'index**.
+
+### Directory listing (`autoIndex`)
+
+Quand `autoindex on` et aucun `index` : on ouvre le dossier (`opendir`/`readdir`/`closedir`, tous autorisés) et on fabrique une page HTML « Index of &lt;url&gt; » listant les entrées. Détails qui comptent :
+
+- On saute `.` et `..`.
+- Chaque entrée est `stat`ée pour savoir si c'est un **dossier** → on lui ajoute un `/` (au nom affiché **et** au lien), pour que le clic re-tombe sur un listing/route de dossier.
+- Les liens sont construits sur l'**URL** de la requête (`_req.getPath()` + nom), pas sur le chemin disque — le client clique sur des URL, pas sur des chemins `./www/...`.
+- **Sécurité : chaque nom est HTML-échappé** (`htmlEscape` : `& < > "`). Un fichier nommé `<script>` ne doit pas pouvoir injecter du HTML dans la page de listing (XSS via nom de fichier). C'est le pendant, côté sortie, de l'anti-traversal côté entrée.
 
 Le service lui-même :
 
@@ -174,11 +185,45 @@ Le `Content-Type` vient de `MimeTypes::forPath` (`Router/MimeTypes`), une petite
 
 ---
 
+## 6bis. `POST` — upload de fichiers (`Router/Upload`)
+
+`handlePost` traite un POST sur une location **où l'upload est activé** (`upload_store` présent → `uploadEnabled`). Sinon → `403` (rien à faire d'un corps ici). Le corps complet est déjà assemblé par le parseur (`_req.getBody()`, dé-chunké si besoin) : `Upload::handle` l'écrit sur disque.
+
+Deux formats gérés, selon le `Content-Type` :
+
+- **`multipart/form-data`** (le cas navigateur / `curl -F`) : on extrait le `boundary` du `Content-Type`, on découpe le corps en parties, et pour chaque partie qui a un `filename` on écrit ses données dans `upload_store`. Les parties sans `filename` (champs de formulaire ordinaires) sont ignorées.
+- **corps brut** (`curl --data-binary`, `application/octet-stream`…) : on écrit tout le corps dans un fichier dont le nom vient du **dernier segment de l'URL** (`POST /uploads/photo.png` → `photo.png`) ou, à défaut, d'un nom généré (`upload_<timestamp>`).
+
+Succès → **`201 Created`** avec un corps listant les fichiers écrits. Échec d'écriture → `500` ; multipart malformé / `boundary` absent → `400`.
+
+**Sécurité — confinement dans `upload_store` (`sanitizeFilename`).** Le `filename` d'un multipart vient du **client** : il peut valoir `../../etc/cron.d/x`. On ne garde donc que le **basename** (tout ce qui suit le dernier `/` ou `\`), et on rejette `.`/`..`. L'écriture ne peut pas sortir de `upload_store`. C'est la **même défense que l'anti-traversal du GET (§5)**, mais appliquée à une donnée venue du **corps**, pas de l'URL. En profondeur : une URL de traversal (`POST /uploads/../../x`) est **en plus** bloquée en amont par `resolveFsPath` (§5), qui tourne pour toutes les méthodes.
+
+> `client_max_body_size` est appliqué **par location** (cf. §1 de ce doc et `HTTP_REQUESTS.md` §17.9) : un upload vers `/uploads` (limite `10m`) n'est plus bridé par la limite du server (`1m`).
+
+---
+
+## 6ter. `DELETE` — suppression (`handleDelete`)
+
+`DELETE` réutilise **le même `fsPath`** que le GET (donc la même résolution `root` alias **et** la même protection anti-traversal `resolveFsPath`, §5). Logique :
+
+- `stat` échoue → `404` (rien à supprimer) ;
+- cible = **dossier** → `403` (on ne supprime pas un répertoire) ;
+- sinon `std::remove(fsPath)` : succès → **`204 No Content`** (réponse sans corps) ; échec (droits) → `403`.
+
+> **Fonction de suppression : `std::remove`** (`<cstdio>`, bibliothèque standard C++), **pas** `unlink` — ce dernier n'est pas dans la liste fermée de fonctions autorisées du sujet. `std::remove` est la voie standard C++ ; **à confirmer avec l'évaluateur** que c'est accepté pour le DELETE.
+
+---
+
 ## 7. Redirections & pages d'erreur
 
 **Redirection** (`makeRedirect`) : `status = redirectCode` (301/302), header `Location: redirectTarget`, body vide. Court-circuite tout (cf. §2). Exemple : `location /old { return 301 http://localhost:8080/; }`.
 
-**Erreurs** (`makeError`) : aujourd'hui, page HTML **par défaut** via `HttpResponse::defaultErrorPage(code)` (style NGINX). `makeError` est une **méthode** (elle a accès à `_config`) précisément pour que le branchement des `error_page` **custom** (lire le fichier déclaré en config, retomber sur la page par défaut sinon) se fasse à **un seul endroit**, sans toucher au reste.
+**Erreurs** (`makeError`) : `makeError` regarde d'abord `_config.errorPages` (rempli par la directive `error_page`). Si le code y figure, il **résout le chemin** de la page contre le **root du server** (ex. `error_page 404 /errors/404.html` + `root ./www` → `./www/errors/404.html`) et la sert. Deux filets de sécurité :
+
+- si le fichier custom est **illisible/absent**, on **retombe** sur `HttpResponse::defaultErrorPage(code)` (pas de récursion : on n'appelle pas `makeError` à nouveau, on prend directement la page par défaut) ;
+- aucune page custom déclarée pour ce code → page par défaut.
+
+C'est le **point unique** de génération d'erreur : toutes les branches d'erreur du Router passent par là, donc `error_page` couvre `404`, `403`, `405`, etc. d'un coup. *(Limite actuelle : la résolution se fait au niveau **server** — un `error_page` déclaré dans une `location` précise n'est pas encore distingué ; suffisant pour le cas courant.)*
 
 ---
 
@@ -186,12 +231,13 @@ Le `Content-Type` vient de `MimeTypes::forPath` (`Router/MimeTypes`), une petite
 
 | Feature | État | Point d'insertion |
 |---|---|---|
-| Directory listing (autoindex) | ⏳ `403` sur dossier sans index | branche « aucun index trouvé » de `handleGet` |
-| Pages d'erreur custom (`error_page`) | ⏳ page par défaut | `Router::makeError` (accès à `_config.errorPages`) |
-| POST / upload | ⏳ `501` | branche non-GET de `run()` |
-| DELETE | ⏳ `501` | branche non-GET de `run()` |
+| Directory listing (autoindex) | ✅ `autoIndex` (opendir/readdir, HTML-échappé) | fait |
+| Pages d'erreur custom (`error_page`) | ✅ `makeError` lit `_config.errorPages` | fait (niveau server) |
+| POST / upload | ✅ `handlePost` + `Router/Upload` (multipart + brut) | fait |
+| `Expect: 100-continue` | ✅ émis dès `headersDone` si checks OK | `Client` (§ci-dessous) |
+| DELETE | ✅ `handleDelete` (`std::remove`, `204`) | fait |
 | CGI (`.py`…) | ⏳ fichier servi tel quel | avant `handleGet`, sur détection d'extension `cgi` |
-| `client_max_body_size` par location | ⏳ limite du **server** | la limite vient de `selectVhost`, à raffiner avec la location matchée |
+| `client_max_body_size` par location | ✅ `Router::matchLocation` dans `Client::resolveMaxBodySize` | fait |
 
 Chaque case cochée de la roadmap (CLAUDE.md §8) remplace une de ces branches — la structure de `run()` est faite pour ça.
 
@@ -249,14 +295,34 @@ curl -v http://localhost:8080/nope.html           # 404  fichier absent
 curl -v http://localhost:8080/a/b/c/d.html        # 404  chemin profond absent
 ```
 
-### 9.6 `403 Forbidden` — dossier sans index (autoindex off)
+### 9.6 `403` vs autoindex — le même dossier, deux `autoindex`
+
+Le dossier `./www/private` (sans index) est visible via **deux** vhosts qui diffèrent sur `autoindex` :
 
 ```sh
-curl -v http://localhost:8080/private/            # 403  ./www/private existe, pas d'index, autoindex off
-curl -v http://localhost:8080/private/note.txt    # 200  le fichier lui-même reste servable
+curl -v http://localhost:8080/private/            # 403   location / a autoindex off
+curl -v http://localhost:9090/private/            # 200   server 9090 a autoindex on -> LISTING HTML
+curl -v http://localhost:8080/private/note.txt    # 200   le fichier lui-même reste servable
 ```
 
-> Quand l'autoindex sera implémenté (phase 3), `/private/` restera `403` (car `location /` a `autoindex off`), mais `http://localhost:9090/` (autoindex on) listera le dossier au lieu de servir l'index si l'index disparaissait.
+Le listing de `/uploads/` (autoindex on, root `./www/uploads`, pas d'index) :
+
+```sh
+curl -v http://localhost:8080/uploads/            # 200   liste hello.txt
+```
+
+À vérifier dans le body du listing : titre « Index of /uploads/ », un `<a href="/uploads/hello.txt">hello.txt</a>`, les dossiers suffixés d'un `/`. **`index` gagne sur `autoindex`** : `GET /` sur 8080 sert `index.html` (pas de listing) car l'index existe.
+
+### 9.6bis Pages d'erreur custom (`error_page`)
+
+Le server `localhost` déclare `error_page 404 /errors/404.html`. Une 404 doit servir **la page custom**, pas la page par défaut :
+
+```sh
+curl -s http://localhost:8080/nope.html | grep -i custom     # doit trouver le mot "custom" (page ./www/errors/404.html)
+curl -s http://localhost:9090/nope.html | head -1            # server 9090 SANS error_page -> page par défaut nginx-like
+```
+
+Filet de sécurité : si le fichier custom est supprimé, la 404 retombe sur la page par défaut (pas de crash, pas de boucle).
 
 ### 9.7 `405 Method Not Allowed` — + header `Allow`
 
@@ -284,14 +350,70 @@ curl -vL http://localhost:8080/old                # -L suit la redirection -> ab
 curl -v -X POST http://localhost:8080/old         # 301 quand même (court-circuit avant le check méthode)
 ```
 
-### 9.9 `501` — méthode connue mais handler pas encore écrit
+### 9.9 `POST` — upload de fichiers
 
 ```sh
-curl -v -X POST   http://localhost:8080/uploads/hello.txt   # 501 (POST autorisé sur /uploads, upload pas codé)
-curl -v -X DELETE http://localhost:8080/uploads/hello.txt   # 501 (DELETE autorisé, pas codé)
+# a) multipart (comme un formulaire navigateur / curl -F) -> 201, fichier dans ./www/uploads/
+echo "coucou webserv" > /tmp/up.txt
+curl -v -F "file=@/tmp/up.txt" http://localhost:8080/uploads
+ls -l www/uploads/up.txt                     # le fichier doit apparaître
+
+# b) corps brut, nom pris dans l'URL -> 201, ./www/uploads/brut.txt
+curl -v --data-binary @/tmp/up.txt http://localhost:8080/uploads/brut.txt
+ls -l www/uploads/brut.txt
+
+# c) relire l'uploadé via GET (le meme dossier)
+curl -v http://localhost:8080/uploads/up.txt # 200, contenu "coucou webserv"
+
+# d) POST sur une location SANS upload_store -> 403
+curl -v -X POST http://localhost:8080/       # 403 (location /, pas d'upload)  [NB: aussi 405 avant, car / n'autorise que GET]
+
 ```
 
-> Deviendra `201`/`200`/`204` quand upload et DELETE seront faits. À ne pas confondre avec le `501` du **parseur** (méthode totalement inconnue comme `PATCH`).
+### 9.9quater `DELETE` — suppression
+
+```sh
+curl -v -X DELETE http://localhost:8080/uploads/up.txt   # 204 (fichier supprimé)
+ls www/uploads/up.txt                                    # ne doit plus exister
+curl -v -X DELETE http://localhost:8080/uploads/up.txt   # 404 (déjà supprimé)
+curl -v -X DELETE http://localhost:8080/uploads/         # 403 (c'est un dossier)
+curl -v -X DELETE http://localhost:8080/                 # 405 (DELETE interdit sur "/")
+curl -v -X DELETE 'http://localhost:8080/uploads/../../etc/passwd'  # 403 (traversal bloqué)
+```
+
+### 9.9quinquies `Expect: 100-continue`
+
+```sh
+# curl envoie Expect: 100-continue au-dela de ~1 Ko et attend le feu vert
+head -c 5000 /dev/zero | tr '\0' a > /tmp/mid.txt
+curl -v -F "file=@/tmp/mid.txt" http://localhost:8080/uploads
+# dans la sortie -v : on doit voir "< HTTP/1.1 100 Continue" PUIS "< HTTP/1.1 201 Created"
+# (avant, curl attendait ~1s son delai de grace ; maintenant le 100 arrive tout de suite)
+
+# le refus anticipe marche toujours : body > limite -> 413 sans 100 Continue
+head -c 20000000 /dev/zero | tr '\0' a > /tmp/toobig.bin
+curl -v -F "file=@/tmp/toobig.bin" http://localhost:8080/uploads   # 413 (limite /uploads = 10m), pas de 100
+```
+
+> Sur `/` : POST est d'abord **interdit** (méthode) → `405` (la location n'autorise que GET). Le `403` « upload non activé » ne s'applique qu'à une location qui **autorise** POST mais **sans** `upload_store`.
+
+### 9.9bis Sécurité de l'upload — traversal via `filename`
+
+```sh
+# le filename multipart tente de sortir du dossier -> on ne garde que le basename
+curl -v -F 'file=@/tmp/up.txt;filename=../../pwned.txt' http://localhost:8080/uploads
+ls -l www/uploads/pwned.txt      # ecrit ICI (basename), JAMAIS deux niveaux plus haut
+ls -l pwned.txt 2>/dev/null      # ne doit PAS exister a la racine du repo
+```
+
+### 9.9ter `client_max_body_size` par location
+
+```sh
+# /uploads autorise 10m ; un fichier de 2 Mo passe (alors que la limite server est 1m)
+head -c 2000000 /dev/zero > /tmp/big.bin
+curl -v -F "file=@/tmp/big.bin" http://localhost:8080/uploads   # 201 (limite location 10m)
+# la meme taille sur "/" serait 413 (limite server 1m) -- mais "/" refuse deja POST en 405
+```
 
 ### 9.10 Path traversal — doit **toujours** échouer en `403`
 
@@ -335,7 +457,10 @@ done
 | `GET /private/` | 403 | dossier sans index, autoindex off |
 | `GET /nope.html` | 404 | fichier absent |
 | `POST /` | 405 + `Allow: GET` | méthode interdite sur la route |
-| `POST /uploads/hello.txt` | 501 | méthode autorisée, handler pas encore écrit |
+| `POST /uploads` (multipart) | 201 | upload écrit dans `./www/uploads/` |
+| `POST /uploads` (sans upload_store ailleurs) | 403 | POST autorisé mais pas d'upload configuré |
+| `DELETE /uploads/x` (fichier) | 204 | supprimé (`std::remove`) |
+| `DELETE /uploads/` (dossier) | 403 | on ne supprime pas un dossier |
 | `GET /old` | 301 + `Location` | redirection, court-circuit |
 | `GET /../etc/passwd` | 403 | traversal bloqué |
 | `GET /` avec `Host: site-b.local` | 200 (autre body) | virtual host |

@@ -18,7 +18,7 @@ static std::string	toLowerCopy(std::string const & s)
 	return (out);
 }
 
-Client::Client(int fd, Acceptor const & parent) : Arole(fd), _acceptor(&parent), _acceptorfd(parent.getFD()), _bytes_send(0), _draining(false), _closeAfterWrite(false), _limitApplied(false), _lastActivity(time(NULL)), _requestStart(0)
+Client::Client(int fd, Acceptor const & parent) : Arole(fd), _acceptor(&parent), _acceptorfd(parent.getFD()), _bytes_send(0), _draining(false), _closeAfterWrite(false), _limitApplied(false), _continueHandled(false), _sendingContinue(false), _lastActivity(time(NULL)), _requestStart(0)
 {
 	this->_client += 1;
 	_activeClient[_acceptorfd].insert(std::pair<int, Client *>(_fd, this));
@@ -38,6 +38,8 @@ void	Client::cleanRequest(void)
 	_requestStart = 0;
 	_limitApplied = false;
 	_draining = false;
+	_continueHandled = false;
+	_sendingContinue = false;
 }
 
 void	Client::cleanResponse(void)
@@ -74,7 +76,20 @@ size_t	Client::resolveMaxBodySize(void) const
 
 	if (srv == NULL)
 		return (DEFAULT_CLIENT_MAX_BODY_SIZE);
-	return (srv->getConfig().clientMaxBodySize);
+
+	ServerConfig const &	cfg = srv->getConfig();
+	LocationConfig const *	loc = Router::matchLocation(cfg, _request.getPath());
+
+	if (loc != NULL)
+		return (loc->clientMaxBodySize);
+	return (cfg.clientMaxBodySize);
+}
+
+bool	Client::wantsContinue(void) const
+{
+	if (_request.getVersion() != "HTTP/1.1")
+		return (false);
+	return (toLowerCopy(_request.getHeader("expect")).find("100-continue") != std::string::npos);
 }
 
 void	Client::genResponse(void)
@@ -168,6 +183,16 @@ bool	Client::handleRead(Epoll & manager)
 		manager.mod(this);
 		return (false);
 	}
+	if (_request.headersDone() && !_continueHandled && this->wantsContinue())
+	{
+		_continueHandled = true;
+		_response = "HTTP/1.1 100 Continue\r\n\r\n";
+		_bytes_send = 0;
+		_sendingContinue = true;
+		_ev.events = EPOLLOUT;
+		manager.mod(this);
+		return (false);
+	}
 	return (true);
 }
 
@@ -183,6 +208,14 @@ void	Client::handleWrite(Epoll & manager)
 	_lastActivity = time(NULL);
 	if (_bytes_send == _response.length())
 	{
+		if (_sendingContinue)
+		{
+			_sendingContinue = false;
+			this->cleanResponse();
+			_ev.events = EPOLLIN;
+			manager.mod(this);
+			return ;
+		}
 		if (_closeAfterWrite)
 		{
 			this->closeConnection(manager);
