@@ -61,19 +61,36 @@ Socket*	ServerManager::getOrCreateSocket(std::string const & host, uint16_t port
 	return (sock);
 }
 
-void	ServerManager::closeSocket(uint16_t port)
+void	ServerManager::openEndpoint(Server * srv, std::string const & host, uint16_t port)
 {
-	std::map<std::string, Socket*>::iterator it = _sockets.find(makeKey("", port));
+	std::string	key = makeKey(host, port);
+	bool		existed = _sockets.find(key) != _sockets.end();
+
+	try {
+		Socket*	sock = getOrCreateSocket(host, port);
+		sock->addServer(srv);
+		if (existed)
+			std::cout << key << " already open - vhost added" << std::endl;
+		else
+			std::cout << key << " opened" << std::endl;
+	} catch (std::exception & e) {
+		std::cout << e.what() << std::endl;
+	}
+}
+
+void	ServerManager::closeSocket(std::string const & key)
+{
+	std::map<std::string, Socket*>::iterator it = _sockets.find(key);
 
 	if (it == _sockets.end())
 	{
-		std::cout << "Port " << port << " is not open" << std::endl;
+		std::cout << key << " is not open" << std::endl;
 		return ;
 	}
 	it->second->stop(_epoll);
 	delete it->second;
 	_sockets.erase(it);
-	std::cout << "Port " << port << " stopped" << std::endl;
+	std::cout << key << " stopped" << std::endl;
 }
 
 void	ServerManager::build(std::vector<ServerConfig> const & configs)
@@ -117,12 +134,20 @@ void	ServerManager::run(void)
 	}
 }
 
+int	ServerManager::serverIndex(Server const * srv) const
+{
+	for (size_t i = 0; i < _servers.size(); ++i)
+		if (_servers[i] == srv)
+			return (static_cast<int>(i) + 1);
+	return (0);
+}
+
 void	ServerManager::show(void)
 {
-	std::cout << "=== Servers (blocs config) ===" << std::endl;
+	std::cout << "=== Initial servers (blocs config) ===" << std::endl;
 	for (size_t i = 0; i < _servers.size(); ++i)
 		std::cout << "  Server " << i + 1 << " " << *_servers[i] << std::endl;
-	std::cout << "=== Sockets (endpoints) ===" << std::endl;
+	std::cout << "=== Sockets Open (endpoints) ===" << std::endl;
 	for (std::map<std::string, Socket*>::iterator it = _sockets.begin(); it != _sockets.end(); ++it)
 	{
 		Acceptor const &			acc = it->second->getAcceptor();
@@ -134,11 +159,118 @@ void	ServerManager::show(void)
 		for (size_t v = 0; v < vhosts.size(); ++v)
 		{
 			ServerConfig const &	c = vhosts[v]->getConfig();
-			std::cout << " " << (c.serverNames.empty() ? "(default)" : c.serverNames[0]);
+			std::cout << (v ? ", " : " ") << "Server " << serverIndex(vhosts[v]) << " (" << (c.serverNames.empty() ? "(default)" : c.serverNames[0]) << ")";
 		}
 		std::cout << std::endl;
 	}
 	std::cout << std::endl;
+}
+
+void	ServerManager::startMenu(void)
+{
+	if (_servers.empty())
+	{
+		std::cout << "No server configured" << std::endl;
+		return ;
+	}
+	std::cout << "=== Choose a server ===" << std::endl;
+	for (size_t i = 0; i < _servers.size(); ++i)
+	{
+		ServerConfig const &	c = _servers[i]->getConfig();
+		std::cout << "  " << i + 1 << ") " << (c.serverNames.empty() ? "(default)" : c.serverNames[0]) << " listen:";
+		for (size_t j = 0; j < c.listen.size(); ++j)
+			std::cout << (j ? ", " : " ") << makeKey(c.listen[j].first, c.listen[j].second);
+		std::cout << std::endl;
+	}
+	std::cout << "Enter server number" << std::endl;
+	int	sel = safeInputClass::safeInputNumber();
+	if (sel < 1 || sel > static_cast<int>(_servers.size()))
+		return ;
+
+	Server*			srv = _servers[sel - 1];
+	ServerConfig const &	c = srv->getConfig();
+
+	std::cout << "=== Choose an endpoint ===" << std::endl;
+	for (size_t j = 0; j < c.listen.size(); ++j)
+		std::cout << "  " << j + 1 << ") " << makeKey(c.listen[j].first, c.listen[j].second) << std::endl;
+	std::cout << "  " << c.listen.size() + 1 << ") new port (0.0.0.0)" << std::endl;
+	std::cout << "Enter endpoint number" << std::endl;
+	int	ep = safeInputClass::safeInputNumber();
+	if (ep < 1 || ep > static_cast<int>(c.listen.size()) + 1)
+		return ;
+
+	if (ep == static_cast<int>(c.listen.size()) + 1)
+	{
+		std::cout << "Enter the port you want to open" << std::endl;
+		int	port = safeInputClass::safeInputNumber();
+		if (port < 0 || port > 65535)
+			return ;
+		openEndpoint(srv, "", static_cast<uint16_t>(port));
+	}
+	else
+		openEndpoint(srv, c.listen[ep - 1].first, c.listen[ep - 1].second);
+}
+
+void	ServerManager::stopMenu(void)
+{
+	if (_sockets.empty())
+	{
+		std::cout << "No open endpoint" << std::endl;
+		return ;
+	}
+	std::vector<std::string>	keys;
+
+	std::cout << "=== Choose an endpoint ===" << std::endl;
+	for (std::map<std::string, Socket*>::iterator it = _sockets.begin(); it != _sockets.end(); ++it)
+	{
+		keys.push_back(it->first);
+		std::cout << "  " << keys.size() << ") " << it->first << std::endl;
+	}
+	std::cout << "Enter endpoint number" << std::endl;
+	int	sel = safeInputClass::safeInputNumber();
+	if (sel < 1 || sel > static_cast<int>(keys.size()))
+		return ;
+
+	std::string	key = keys[sel - 1];
+	std::cout << "=== " << key << " ===" << std::endl;
+	std::cout << "  1) close the whole port" << std::endl;
+	std::cout << "  2) remove a virtual host" << std::endl;
+	std::cout << "Enter action number" << std::endl;
+	int	act = safeInputClass::safeInputNumber();
+	if (act == 1)
+		closeSocket(key);
+	else if (act == 2)
+		removeVhost(key);
+}
+
+void	ServerManager::removeVhost(std::string const & key)
+{
+	std::map<std::string, Socket*>::iterator it = _sockets.find(key);
+
+	if (it == _sockets.end())
+		return ;
+	std::vector<const Server*> const &	vhosts = it->second->getAcceptor().getServers();
+	if (vhosts.empty())
+	{
+		std::cout << key << " has no virtual host" << std::endl;
+		return ;
+	}
+	std::cout << "=== Virtual hosts on " << key << " ===" << std::endl;
+	for (size_t v = 0; v < vhosts.size(); ++v)
+	{
+		ServerConfig const &	c = vhosts[v]->getConfig();
+		std::cout << "  " << v + 1 << ") Server " << serverIndex(vhosts[v]) << " (" << (c.serverNames.empty() ? "(default)" : c.serverNames[0]) << ")" << std::endl;
+	}
+	std::cout << "Enter vhost number" << std::endl;
+	int	sel = safeInputClass::safeInputNumber();
+	if (sel < 1 || sel > static_cast<int>(vhosts.size()))
+		return ;
+
+	const Server*	target = vhosts[sel - 1];
+	it->second->removeServer(target);
+	std::cout << "Server " << serverIndex(target) << " removed from " << key << std::endl;
+	if (it->second->getAcceptor().getServers().empty())
+		std::cout << "warning: " << key << " now has no virtual host (still listening) - STOP > 1 to close it" << std::endl;
 }
 
 void	ServerManager::sigManager(void)
@@ -154,30 +286,9 @@ void	ServerManager::sigManager(void)
 			return ;
 		}
 		else if (event == "START")
-		{
-			std::cout << "Enter the port you want to open" << std::endl;
-			int port = safeInputClass::safeInputPort();
-			if (port == -1)
-				continue ;
-			if (_sockets.find(makeKey("", port)) != _sockets.end())
-				std::cout << "Port " << port << " is already open" << std::endl;
-			else {
-				try {
-					getOrCreateSocket("", static_cast<uint16_t>(port));
-					std::cout << "Port " << port << " opened" << std::endl;
-				} catch (std::exception & e) {
-					std::cout << e.what() << std::endl;
-				}
-			}
-		}
+			startMenu();
 		else if (event == "STOP")
-		{
-			std::cout << "Enter the port you want to stop" << std::endl;
-			int port = safeInputClass::safeInputPort();
-			if (port == -1)
-				continue ;
-			closeSocket(static_cast<uint16_t>(port));
-		}
+			stopMenu();
 		else if (event == "exit")
 			isRunning = 1;
 	} while (!isRunning);

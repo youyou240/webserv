@@ -30,7 +30,20 @@ void	Acceptor::setFD(int fd)
 
 void	Acceptor::addServer(const Server * srv)
 {
+	for (std::vector<const Server*>::const_iterator it = _vhosts.begin(); it != _vhosts.end(); ++it)
+		if (*it == srv)
+			return ;
 	_vhosts.push_back(srv);
+}
+
+void	Acceptor::removeServer(const Server * srv)
+{
+	for (std::vector<const Server*>::iterator it = _vhosts.begin(); it != _vhosts.end(); ++it)
+		if (*it == srv)
+		{
+			_vhosts.erase(it);
+			return ;
+		}
 }
 
 std::vector<const Server*> const &	Acceptor::getServers(void) const
@@ -64,7 +77,7 @@ void	Acceptor::handle_event(Epoll & manager, uint32_t)
 	int fd = accept(_fd, NULL, NULL);
 	if (fd == -1)
 		return ;
-	Client	*client = new Client(fd, this->_fd);
+	Client	*client = new Client(fd, *this);
 	if (fcntl(fd, F_SETFL, O_NONBLOCK) == -1)
 	{
 		client->closeConnection(manager);

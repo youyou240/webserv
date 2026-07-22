@@ -1,0 +1,5 @@
+Hello from ./www/uploads/hello.txt
+
+This file is served through the /uploads location, whose own root points at
+./www/uploads. Requesting /uploads/hello.txt strips the /uploads prefix and
+appends /hello.txt to that root.

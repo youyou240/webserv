@@ -16,6 +16,10 @@ SRCS = main.cpp Server/ServerClass.cpp	\
 		Config/LocationConfigClass.cpp \
 		Config/ConfigParserClass.cpp \
 		Config/ConfigParserDirectives.cpp \
+		Http/HttpRequestClass.cpp \
+		Http/HttpResponseClass.cpp \
+		Router/RouterClass.cpp \
+		Router/MimeTypesClass.cpp \
 		myzod/safeInputClass.cpp
  
 OBJS = $(SRCS:%.cpp=%.o)

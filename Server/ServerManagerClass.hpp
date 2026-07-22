@@ -23,8 +23,13 @@ class ServerManager {
 	ServerManager& operator=(ServerManager const &);
 
 	Socket*	getOrCreateSocket(std::string const & host, uint16_t port);
-	void	closeSocket(uint16_t port);
+	void	openEndpoint(Server * srv, std::string const & host, uint16_t port);
+	void	closeSocket(std::string const & key);
 	void	addServer(Server * srv);
+	int		serverIndex(Server const * srv) const;
+	void	startMenu(void);
+	void	stopMenu(void);
+	void	removeVhost(std::string const & key);
 	void	sigManager(void);
 
 public:

@@ -10,6 +10,7 @@
 
 # define MAX_REQUEST	4096
 # define MIN_MAX	64
+# define EPOLL_TIMEOUT_MS	5000
 
 class Arole;
 

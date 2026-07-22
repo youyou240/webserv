@@ -44,7 +44,7 @@ std::vector<struct epoll_event> const &	Epoll::getEvents(void) const
 
 int	Epoll::wait(void)
 {
-	int	events = epoll_wait(_fd, _events.data(), _events.size(), 60000);
+	int	events = epoll_wait(_fd, _events.data(), _events.size(), EPOLL_TIMEOUT_MS);
 	if (events == -1)
 	{
 		if (errno == EINTR)
@@ -78,11 +78,5 @@ void	Epoll::mod(Arole * role)
 
 void	Epoll::del(Arole * role)
 {
-	Client *conv;
-
-	if (epoll_ctl(_fd, EPOLL_CTL_DEL, role->getFD(), NULL) == -1)
-	{
-		if ((conv = dynamic_cast<Client *> (role)))
-			conv->closeConnection(*this);
-	}
+	epoll_ctl(_fd, EPOLL_CTL_DEL, role->getFD(), NULL);
 }

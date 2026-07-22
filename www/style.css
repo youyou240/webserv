@@ -1,0 +1,32 @@
+:root {
+	--ink: #1a1a1a;
+	--paper: #f5f2ea;
+	--accent: #b5462f;
+}
+
+body {
+	margin: 0 auto;
+	max-width: 42rem;
+	padding: 2rem 1.5rem;
+	font-family: Georgia, "Times New Roman", serif;
+	color: var(--ink);
+	background: var(--paper);
+	line-height: 1.6;
+}
+
+h1 {
+	font-size: clamp(2rem, 1rem + 5vw, 3.5rem);
+	letter-spacing: -0.02em;
+	margin-bottom: 0.25rem;
+}
+
+a {
+	color: var(--accent);
+}
+
+code {
+	font-family: "SFMono-Regular", Consolas, monospace;
+	background: rgba(0, 0, 0, 0.06);
+	padding: 0.1em 0.35em;
+	border-radius: 3px;
+}

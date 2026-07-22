@@ -15,10 +15,12 @@ Avant de lever le rideau, présentons les acteurs. Ils sont peu nombreux, et c'e
 - **`Arole`** *(Server/AroleClass/AroleClass.cpp)* — une **classe abstraite**. Elle dit : « tout objet surveillé par `Epoll` doit savoir réagir à son propre événement ». Elle ne sait pas *comment*, elle impose juste le contrat.
 - **`Acceptor`** *(Server/AroleClass/AcceptorClass.cpp)* — un `Arole` concret. Sa seule mission : **accepter les nouvelles connexions** sur un port.
 - **`Client`** *(Server/AroleClass/ClientClass.cpp)* — un autre `Arole` concret. Il représente **un visiteur connecté** : il lit ce qu'on lui envoie, il répond, puis il s'en va.
-- **`Socket`** *(Server/socket/socketClass.cpp)* — un **endpoint** d'écoute (un `host:port`, un `bind`/`listen`). Possédé par l'`Epoll`.
+- **`Socket`** *(Server/socket/socketClass.cpp)* — un **endpoint** d'écoute (un `host:port`, un `bind`/`listen`). Possédé par le `ServerManager`.
 - **`Server`** *(Server/ServerClass.cpp)* — **un bloc `server` du fichier de config** (un virtual host) : il porte sa `ServerConfig` et vit sur un ou plusieurs endpoints.
 - **`ConfigParser`** *(Config/ConfigParserClass.cpp)* — le cartographe. Il lit le fichier de configuration et en tire une carte que tout le reste va suivre.
 - **`ServerConfig` / `LocationConfig`** *(Config/ServerConfigClass.cpp, Config/LocationConfigClass.cpp)* — la carte elle-même : des sacs de données décrivant chaque site et chacune de ses routes.
+- **`HttpRequest`** *(Http/HttpRequestClass.cpp)* — l'**oreille** du serveur : une machine à états qui digère les octets reçus au fur et à mesure et sait dire « la requête est complète » ou « elle est invalide, voilà le code d'erreur ».
+- **`HttpResponse`** *(Http/HttpResponseClass.cpp)* — la **voix** : il assemble status line, headers (`Content-Length`, `Date`, `Server`…) et body en une réponse HTTP sérialisée, avec les pages d'erreur par défaut.
 
 Retenez surtout cette phrase, tout le reste en découle :
 
@@ -157,7 +159,7 @@ Le mot-clé `static` ici est malin : la variable `epoll` n'est créée **qu'une 
 À sa naissance, l'`Epoll` demande au noyau de lui créer son instance de surveillance :
 
 ```cpp
-Epoll::Epoll(void) : _events(MIN_MAX), _active(1)
+Epoll::Epoll(void) : _events(MIN_MAX)
 {
     _fd = epoll_create(1);
     if (_fd == -1)
@@ -193,7 +195,7 @@ if (it != _sockets.end())
     return (it->second);
 Socket *sock = new Socket(host, port);
 _sockets.insert(std::make_pair(key, sock));
-sock->start(*this);
+sock->start(_epoll);
 return (sock);
 ```
 
@@ -338,7 +340,7 @@ Décortiquons le moment le plus important : `wait()`.
 ```cpp
 int Epoll::wait(void)
 {
-    int events = epoll_wait(_fd, _events.data(), _events.size(), 60000);
+    int events = epoll_wait(_fd, _events.data(), _events.size(), EPOLL_TIMEOUT_MS);
     if (events == -1)
     {
         if (errno == EINTR)
@@ -351,9 +353,9 @@ int Epoll::wait(void)
 
 *(Epoll/epollClass.cpp)*
 
-`epoll_wait` est **le seul endroit où le programme dort**. Il dit au noyau : « réveille-moi seulement quand au moins un de mes FD surveillés a quelque chose à faire — ou au bout de 60 secondes (60000 ms), même s'il ne se passe rien ». Tant que le serveur est inactif, il ne consomme **aucun** CPU : il attend.
+`epoll_wait` est **le seul endroit où le programme dort**. Il dit au noyau : « réveille-moi seulement quand au moins un de mes FD surveillés a quelque chose à faire — ou au bout de `EPOLL_TIMEOUT_MS` (5 secondes), même s'il ne se passe rien ». Tant que le serveur est inactif, il ne consomme **quasiment aucun** CPU : il attend.
 
-Pourquoi ce timeout de 60 s alors qu'on pourrait attendre indéfiniment ? Parce qu'on veut **périodiquement vérifier les connexions trop vieilles** (on y revient à l'acte 6). Le serveur ne reste donc jamais bloqué pour toujours, même sans trafic.
+Pourquoi ce timeout de 5 s alors qu'on pourrait attendre indéfiniment ? Parce qu'on veut **périodiquement vérifier les connexions trop vieilles** (on y revient à l'acte 8) : le gardien du temps ne tourne qu'au réveil de la boucle. Avec des deadlines de 30 s sur les headers, un réveil toutes les 60 s les ferait déborder du double ; toutes les 5 s, elles sont respectées à une marge près, pour un coût dérisoire (un réveil à vide toutes les 5 s ne fait rien de plus que reboucler).
 
 Quand `epoll_wait` revient, `_events` contient les FD prêts. La boucle les parcourt et, pour chacun :
 
@@ -378,7 +380,7 @@ void Acceptor::handle_event(Epoll & manager, uint32_t)
     int fd = accept(_fd, NULL, NULL);
     if (fd == -1)
         return ;
-    Client *client = new Client(fd, this->_fd);
+    Client *client = new Client(fd, *this);
     if (fcntl(fd, F_SETFL, O_NONBLOCK) == -1)
     {
         client->closeConnection(manager);
@@ -400,9 +402,10 @@ void Acceptor::handle_event(Epoll & manager, uint32_t)
 À la construction du `Client`, il s'enregistre lui-même et prépare sa carte d'identité, comme l'acceptor :
 
 ```cpp
-Client::Client(int fd, int servfd)
-    : Arole(fd), _acceptorfd(servfd), _bytes_send(0),
-      _complete(false), _lastActivity(time(NULL))
+Client::Client(int fd, Acceptor const & parent)
+    : Arole(fd), _acceptor(&parent), _acceptorfd(parent.getFD()), _bytes_send(0),
+      _draining(false), _closeAfterWrite(false), _limitApplied(false),
+      _lastActivity(time(NULL)), _requestStart(0)
 {
     this->_client += 1;
     _activeClient[_acceptorfd].insert(std::pair<int, Client *>(_fd, this));
@@ -413,7 +416,7 @@ Client::Client(int fd, int servfd)
 
 *(Server/AroleClass/ClientClass.cpp)*
 
-`_ev.events = EPOLLIN` : pour l'instant, ce client nous intéresse **en lecture** (on attend qu'il nous parle). `_ev.data.ptr = this` : encore notre carte d'identité. Et `_lastActivity = time(NULL)` enregistre l'heure de naissance — on s'en servira pour les timeouts.
+`_ev.events = EPOLLIN` : pour l'instant, ce client nous intéresse **en lecture** (on attend qu'il nous parle). `_ev.data.ptr = this` : encore notre carte d'identité. Le client garde un pointeur vers **son `Acceptor`** : c'est par lui qu'il connaît les virtual hosts de son endpoint (nécessaire pour choisir la bonne limite de body — et demain, pour le routing). Enfin, deux horloges démarrent : `_lastActivity` (dernière activité) et `_requestStart` (début de la requête en cours, `0` = pas de requête en cours) — leurs rôles distincts sont expliqués à l'acte 8.
 
 À partir de maintenant, l'`Epoll` surveille deux choses : l'acceptor (pour les prochains visiteurs) **et** ce client.
 
@@ -466,20 +469,24 @@ bool Client::handleRead(Epoll & manager)
 
     if (bytes_read == 0)
     {
+        if (_draining)
+        {
+            _ev.events = EPOLLOUT;
+            manager.mod(this);
+            return (false);
+        }
         this->closeConnection(manager);
         return (false);
     }
     if (bytes_read < 0)
         return (true);
+    _lastActivity = time(NULL);
+    if (_draining)
+        return (true);
+    if (_requestStart == 0)
+        _requestStart = time(NULL);
     _request.append(buffer, bytes_read);
     ...
-    if (_complete)
-    {
-        this->genResponse();
-        _ev.events = EPOLLOUT;
-        manager.mod(this);
-    }
-    return (true);
 }
 ```
 
@@ -487,13 +494,62 @@ bool Client::handleRead(Epoll & manager)
 
 Trois cas après `recv`, et **on ne regarde jamais `errno`** (le sujet l'interdit après une lecture/écriture) :
 
-- **`bytes_read == 0`** : le client a fermé proprement de son côté. (C'est une **valeur de retour**, pas `errno` : autorisé.) → on ferme, et on renvoie `false` pour signaler « ce client n'existe plus, n'y touche pas ».
+- **`bytes_read == 0`** : le client a fermé son côté écriture. (C'est une **valeur de retour**, pas `errno` : autorisé.) Deux sous-cas : en temps normal, plus rien à attendre → on ferme, et on renvoie `false` pour signaler « ce client n'existe plus, n'y touche pas ». Mais si on est en train de **drainer** (voir plus bas), une réponse d'erreur attend encore d'être livrée : on bascule en `EPOLLOUT` seul pour l'envoyer d'abord — sans ça, un client qui fait un *half-close* (il a fini d'envoyer et attend notre réponse, comportement de `nc` sur macOS) ne recevrait jamais son `400`/`413`.
 - **`bytes_read < 0`** : pas de données disponibles pour l'instant. On ne s'affole pas, on ne ferme pas : on renvoie simplement la main, on réessaiera quand le noyau nous re-préviendra. Et si c'était une vraie erreur réseau ? Elle reviendra sous forme de `EPOLLERR`/`EPOLLHUP`, traités en haut de `handle_event`. C'est ce mécanisme qui **remplace** la lecture d'`errno`.
-- **`bytes_read > 0`** : on accumule les octets dans `_request`. On accumule, car une requête peut arriver en plusieurs morceaux.
+- **`bytes_read > 0`** : on note l'activité (`_lastActivity`), on démarre l'horloge de la requête si c'est son premier octet (`_requestStart`), et on **nourrit le parseur** : `_request` n'est plus une simple chaîne, c'est un objet `HttpRequest` — une machine à états qui digère les octets au fur et à mesure.
 
-Quand la requête est **complète** (`_complete`), on prépare la réponse, et surtout : on **bascule l'intérêt** vers `EPOLLOUT` (« maintenant je veux écrire ») puis on prévient l'`Epoll` avec `manager.mod(this)`. La prochaine fois, c'est en écriture que le client sera prêt.
+### La machine à états `HttpRequest` — savoir quand la requête est finie
 
-> Le `return (false)` après une fermeture n'est pas un détail : dès qu'une connexion est fermée, l'objet `Client` est **détruit** (acte 6). Le `false` permet à `handle_event` de s'arrêter net et de ne plus jamais toucher l'objet. **Règle d'or : tout ce qui peut fermer la connexion est suivi d'un `return`.**
+Une requête peut arriver en un morceau, en cinquante, ou coupée au milieu d'un header : `recv` rend ce que le réseau veut bien donner. Le parseur *(Http/HttpRequestClass.cpp)* accumule donc dans un buffer interne et avance d'état en état, en ne consommant que ce qui est complet — jamais il n'attend, jamais il ne bloque :
+
+```
+S_REQUEST_LINE → S_HEADERS → S_BODY (Content-Length) ─────────────→ S_COMPLETE
+                       └────→ S_CHUNK_SIZE ⇄ S_CHUNK_DATA → S_TRAILER ──↗
+                                              (à tout moment → S_ERROR)
+```
+
+- **Request line** : méthode, URI (path percent-décodé, query séparée), version. Validation stricte et immédiate : syntaxe cassée → `400`, version inconnue → `505`, méthode non gérée → `501`, ligne trop longue → `414`. C'est du **fail-fast** : une première ligne irrécupérable est refusée sans attendre la suite.
+- **Headers** : rangés dans une `map` (clés en minuscules), `Host` obligatoire en HTTP/1.1, doublons interdits sur `Host`/`Content-Length`/`Transfer-Encoding` (anti request-smuggling), taille totale plafonnée (`MAX_HEADER_BYTES`).
+- **Body** : soit `Content-Length` octets, soit **dé-chunking** (`Transfer-Encoding: chunked`) fait ici une fois pour toutes — le CGI recevra un body déjà propre, comme l'exige le sujet.
+- `client_max_body_size` est vérifié **pendant** la lecture : dès le `Content-Length` annoncé, ou chunk par chunk. On sait donc dire `413` sans avoir lu 2 Go pour rien (bonus observé en test : curl envoie `Expect: 100-continue` et attend avant de pousser le body → refusé dès les headers, zéro octet de body transféré).
+
+Deux issues possibles : `isComplete()` (on peut répondre) ou `isError()` (le code de la réponse est déjà décidé). La suite de `handleRead` aiguille :
+
+```cpp
+if (!_limitApplied && _request.headersDone())
+{
+    _request.setMaxBodySize(this->resolveMaxBodySize());
+    _limitApplied = true;
+}
+if (_request.isError())
+{
+    this->genErrorResponse(_request.getErrorCode());
+    _draining = true;
+    _closeAfterWrite = true;
+    _ev.events = EPOLLIN | EPOLLOUT;
+    manager.mod(this);
+    return (false);
+}
+if (_request.isComplete())
+{
+    this->genResponse();
+    _closeAfterWrite = !_request.isKeepAlive();
+    _ev.events = EPOLLOUT;
+    manager.mod(this);
+    return (false);
+}
+return (true);
+```
+
+*(Server/AroleClass/ClientClass.cpp)*
+
+Trois choses importantes ici :
+
+1. **La limite de body dépend du site visé.** Dès que les headers sont complets, on lit `Host`, on choisit le virtual host parmi ceux de l'endpoint (`selectVhost`, la sélection annoncée à l'acte 0) et on applique **son** `client_max_body_size`. (Le raffinement par `location` viendra avec le routing.)
+2. **Requête complète** → on prépare la réponse (`HttpResponse`) et on bascule l'intérêt vers `EPOLLOUT`, comme avant. `_closeAfterWrite` mémorise ce qu'il faudra faire après l'envoi, selon le header `Connection` (keep-alive ou close).
+3. **Requête en erreur** → le **drain** : on demande `EPOLLIN | EPOLLOUT` **en même temps**. Pourquoi ne pas juste répondre ? Parce que le client est peut-être en plein milieu de l'envoi de son gros body. Si on arrête de lire, ses buffers se remplissent, son envoi bloque, et il ne lira peut-être jamais notre `413` : deadlock. On continue donc de lire **en jetant tout** (`_draining` : les octets suivants sont lus puis ignorés) pendant qu'on pousse la réponse — puis on ferme. C'est le cas « lecture et écriture simultanées » que le sujet exige de savoir gérer.
+
+> Le `return (false)` après une fermeture n'est pas un détail : dès qu'une connexion est fermée, l'objet `Client` est **détruit** (acte 7). Le `false` permet à `handle_event` de s'arrêter net et de ne plus jamais toucher l'objet. Et comme `manager.mod(...)` peut lui-même fermer la connexion en cas d'échec, **règle d'or : tout appel qui peut fermer la connexion (`closeConnection`, `manager.add/mod/del`) est immédiatement suivi d'un `return`.**
 
 ---
 
@@ -511,12 +567,19 @@ void Client::handleWrite(Epoll & manager)
     if (bytes_sent_now <= 0)
         return ;
     _bytes_send += bytes_sent_now;
+    _lastActivity = time(NULL);
     if (_bytes_send == _response.length())
     {
+        if (_closeAfterWrite)
+        {
+            this->closeConnection(manager);
+            return ;
+        }
         this->cleanResponse();
-        this->_lastActivity = time(NULL);
+        this->cleanRequest();
         _ev.events = EPOLLIN;
         manager.mod(this);
+        return ;
     }
 }
 ```
@@ -531,7 +594,10 @@ D'où la mécanique de `_bytes_send` : c'est un compteur de **« combien d'octet
 - `bytes_left_to_send` : ce qu'il reste à envoyer.
 - Après chaque `send` réussi, on avance le compteur.
 
-Tant que tout n'est pas parti, on reste en `EPOLLOUT` et on reviendra ici au prochain tour pour envoyer la suite. Quand `_bytes_send == _response.length()`, tout est envoyé : on nettoie, on remet l'heure de dernière activité à jour, et on **rebascule l'intérêt vers `EPOLLIN`** — prêt pour une nouvelle requête du même client.
+Tant que tout n'est pas parti, on reste en `EPOLLOUT` et on reviendra ici au prochain tour pour envoyer la suite. Quand `_bytes_send == _response.length()`, tout est envoyé, et `_closeAfterWrite` (décidé à l'acte 5) tranche entre deux destins :
+
+- **`Connection: close`** (ou réponse d'erreur) → `closeConnection`, la conversation est finie.
+- **Keep-alive** → on remet la table pour la requête suivante **du même client** : `cleanResponse` (vide la réponse, remet `_bytes_send` à 0) et `cleanRequest` (remet la machine à états à `S_REQUEST_LINE`, `_requestStart` à 0, baisse `_draining`), puis retour en `EPOLLIN`. C'est ça, le keep-alive : la connexion TCP survit à la requête, et un navigateur peut enchaîner dix requêtes sans repayer le coût d'une connexion.
 
 Comme pour `recv`, si `send` renvoie `<= 0`, on ne consulte pas `errno` : on rend la main, on réessaiera.
 
@@ -602,20 +668,33 @@ void Arole::launchActiveRoutine(Epoll & manager)
 
 *(Server/AroleClass/AroleClass.cpp)*
 
-Il passe en revue **tous les clients connectés** et ferme ceux qui dorment depuis trop longtemps :
+Il passe en revue **tous les clients connectés** et ferme ceux qui ont dépassé leur temps :
 
 ```cpp
 bool Client::getInactiveTime(time_t now) const
 {
-    if ((now - _lastActivity) >= 60)
-        return true;
-    return false;
+    if ((now - _lastActivity) >= IDLE_TIMEOUT)
+        return (true);
+    if (_requestStart != 0)
+    {
+        if (!_request.headersDone() && (now - _requestStart) >= HEADER_TIMEOUT)
+            return (true);
+        if ((now - _requestStart) >= REQUEST_TIMEOUT)
+            return (true);
+    }
+    return (false);
 }
 ```
 
 *(Server/AroleClass/ClientClass.cpp)*
 
-Un client qui n'a rien fait depuis 60 secondes est considéré mort, et on le ferme. C'est ce qui empêche qu'une connexion ouverte mais silencieuse ne reste là pour toujours (et c'est pour ça que `epoll_wait` se réveille au moins toutes les 60 s — pour passer ce gardien régulièrement, même sans trafic).
+Il n'y a pas **un** timeout mais **deux horloges aux rôles opposés** — et confondre les deux ouvre une faille. À expliquer en soutenance :
+
+- **`_lastActivity` + `IDLE_TIMEOUT` (60 s)** : l'horloge d'**inactivité**. Rafraîchie à chaque `recv`/`send` réussi, elle détecte les connexions **mortes ou muettes** (un client parti sans fermer, un keep-alive abandonné).
+- **`_requestStart` + deadlines absolues** : l'horloge de la **requête en cours**. Posée au premier octet, **jamais rafraîchie**. C'est la défense **anti-slowloris** : si on se contentait de l'idle timeout, un attaquant enverrait 1 octet toutes les 59 secondes et garderait sa connexion (donc un slot du serveur) ouverte *indéfiniment*, en toute « activité ». Avec la deadline absolue, peu importe qu'il goutte des octets : `HEADER_TIMEOUT` (30 s) le coupe s'il n'a pas fini ses headers (aucun client légitime ne met 30 s à envoyer des headers — c'est précisément la phase qu'attaque le slowloris classique), et `REQUEST_TIMEOUT` (300 s) plafonne la requête entière — assez large pour un vrai upload sur une connexion lente, fatal pour un trickle infini.
+- `_requestStart == 0` signifie « pas de requête en cours » (client keep-alive entre deux requêtes) : seul l'idle timeout s'applique alors.
+
+C'est ce duo qui garantit la règle du sujet « une requête ne doit jamais hang indéfiniment » — et c'est pour ça que `epoll_wait` se réveille au moins toutes les 5 s (acte 3) : pour passer ce gardien régulièrement, même sans trafic.
 
 Petit détail élégant : remarquez `clientIT++` **avant** d'éventuellement appeler `closeConnection`. Comme fermer un client le retire de la map (`_activeClient`), on avance l'itérateur **d'abord**, pour ne pas se retrouver avec un itérateur qui pointe sur du vide.
 
@@ -667,12 +746,13 @@ Quand `isRunning` tombe à `0`, on ne tue pas le serveur : on bascule dans `sigM
 
 ## Épilogue — Ce qui viendra se poser sur cette fondation
 
-Tout ce qu'on vient de raconter est **le moteur**, et il est terminé. Les features HTTP ne le modifieront pas : elles se brancheront dessus aux endroits qu'on a laissés ouverts.
+Tout ce qu'on vient de raconter est **le moteur plus l'oreille et la voix** du serveur. Les prochaines features se branchent dessus aux endroits laissés ouverts.
 
-- **Le parsing HTTP** prendra place dans `Client::handleRead` : c'est là qu'on accumule déjà les octets dans `_request`. On y mettra une petite machine à états qui décidera *quand* la requête est vraiment complète (ligne de requête, en-têtes, corps), au lieu d'un simple drapeau.
-- **La vraie réponse HTTP** remplacera la génération actuelle, mais partira toujours par `handleWrite`, avec sa mécanique d'envoi partiel inchangée.
+- **Le parsing HTTP** ✅ Fait : la machine à états `HttpRequest` vit dans `Http/`, nourrie par `Client::handleRead` (acte 5). Chunked dé-chunké, keep-alive géré, `413` anticipé avec drain.
+- **La réponse HTTP** ✅ Fait (le contenant) : `HttpResponse` assemble status line + headers + body, envoyé par `handleWrite` avec sa mécanique d'envoi partiel inchangée.
+- **Le routing** ✅ Fait (statique) : `Client::genResponse` ne fabrique plus un récap de debug — il choisit le virtual host (`selectVhost`) puis délègue au **`Router`** (`Router/`), qui matche la `location` au préfixe le plus long, applique `root` (mapping *alias*, préfixe retiré), résout `index`, vérifie les `methods` (→ `405` + `Allow`), bloque le path traversal, et sert le fichier en GET (`stat`/`open`/`read` + MIME) ou redirige (`return` 30x). Détail complet dans **`docs/ROUTING.md`**. Restent à brancher, aux points d'insertion déjà prévus dans `run()` : l'autoindex, les `error_page` custom, POST/upload, DELETE.
 - **Le CGI** sera... **un nouveau `Arole`**. Les tuyaux (`pipe`) d'un programme CGI sont des FD comme les autres : on créera une classe `CgiPipe : public Arole`, on l'enregistrera avec `manager.add(...)`, et le même `epoll` la surveillera. C'est exactement ce que l'abstraction `Arole` a été conçue pour permettre.
-- **Le fichier de configuration** est désormais le point d'entrée et construit les `Server`/`Socket` — c'est l'objet de l'**acte 0**. ✅ Fait.
+- **Le fichier de configuration** est le point d'entrée et construit les `Server`/`Socket` — c'est l'objet de l'**acte 0**. ✅ Fait.
 
 Si vous avez compris les neuf actes, vous avez compris le serveur. Le reste, ce sont des invités qui arrivent à une fête déjà bien organisée.
 
@@ -686,6 +766,7 @@ Si vous avez compris les neuf actes, vous avez compris le serveur. Le reste, ce 
 3. On réagit à **ce qui est prêt** (`events`), jamais à **ce qui nous intéresse** (`_ev.events`).
 4. Jamais d'`errno` après `recv`/`send` ; les vraies erreurs reviennent par `EPOLLERR`/`EPOLLHUP`.
 5. `send` peut être partiel → on suit `_bytes_send`.
-6. On bascule l'intérêt `EPOLLIN` ↔ `EPOLLOUT` avec `manager.mod(...)`.
-7. Un FD se ferme **une fois**, dans `~Arole`. Après une fermeture, on `return` toujours.
-8. Un gardien ferme les clients inactifs depuis 60 s.
+6. On bascule l'intérêt `EPOLLIN` ↔ `EPOLLOUT` avec `manager.mod(...)` — et les **deux à la fois** pour drainer une erreur (`413`) sans deadlock.
+7. Un FD se ferme **une fois**, dans `~Arole`. Après tout appel qui peut fermer (`closeConnection`, `add/mod/del`), on `return` toujours.
+8. La requête est comprise par une **machine à états** (`HttpRequest`) : incrémentale, fail-fast, chunked dé-chunké, `413` vérifié pendant la lecture.
+9. Deux horloges : **idle** (60 s, rafraîchie) pour les connexions mortes, **deadline absolue** (30 s headers / 300 s requête, jamais rafraîchie) contre le slowloris.

@@ -1,0 +1,4 @@
+This directory intentionally has no index file.
+
+Requesting /private/ under a location where autoindex is off must return 403.
+Requesting this file directly (/private/note.txt) must return 200.

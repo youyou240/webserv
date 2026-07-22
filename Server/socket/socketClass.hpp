@@ -38,6 +38,7 @@ public:
 	Acceptor const &	getAcceptor(void) const;
 
 	void		addServer(const Server * srv);
+	void		removeServer(const Server * srv);
 
 	void 		start(Epoll &);
 	void 		stop(Epoll &);

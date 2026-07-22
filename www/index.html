@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="utf-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1">
+	<title>webserv - home</title>
+	<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+	<header>
+		<h1>webserv</h1>
+		<p>A tiny HTTP/1.1 server written in C++98 for the 42 curriculum.</p>
+	</header>
+	<main>
+		<nav aria-label="Site navigation">
+			<ul>
+				<li><a href="/about.html">About this server</a></li>
+				<li><a href="/uploads/hello.txt">A file under /uploads</a></li>
+				<li><a href="/private/">A directory with no index (403)</a></li>
+				<li><a href="/old">A redirect (/old -&gt; /)</a></li>
+				<li><a href="/nope.html">A missing page (404)</a></li>
+			</ul>
+		</nav>
+	</main>
+	<footer>
+		<p>Served from <code>./www/index.html</code>.</p>
+	</footer>
+</body>
+</html>
