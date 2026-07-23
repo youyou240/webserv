@@ -2,6 +2,7 @@
 #include "../Epoll/epollClass.hpp"
 #include "ServerClass.hpp"
 #include "AroleClass/AroleClass.hpp"
+#include "../Cgi/CgiClass.hpp"
 #include "socket/socketClass.hpp"
 #include "../myzod/safeInputClass.hpp"
 #include <iostream>
@@ -128,6 +129,7 @@ void	ServerManager::run(void)
 				role->handle_event(_epoll, events[i].events);
 			}
 			Arole::launchActiveRoutine(_epoll);
+			Cgi::routine(_epoll);
 		}
 		else
 			sigManager();

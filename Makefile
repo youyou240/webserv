@@ -21,15 +21,21 @@ SRCS = main.cpp Server/ServerClass.cpp	\
 		Router/RouterClass.cpp \
 		Router/MimeTypesClass.cpp \
 		Router/UploadClass.cpp \
+		Cgi/CgiClass.cpp \
 		myzod/safeInputClass.cpp
- 
+
 OBJS = $(SRCS:%.cpp=%.o)
+
+CGI_BIN = www/cgi-bin/hello.cgi
 
 $(NAME) : $(OBJS)
 	c++ $(CPPFLAGS) $(OBJS) -o $(NAME)
 
+$(CGI_BIN) : www/cgi-bin/hello.c
+	cc -Wall -Wextra -o $(CGI_BIN) www/cgi-bin/hello.c
+
 .PHONY: all
-all : $(NAME)
+all : $(NAME) $(CGI_BIN)
 
 
 .PHONY: clean
@@ -39,6 +45,7 @@ clean:
 .PHONY: fclean
 fclean: clean
 	$(RM) $(NAME)
+	$(RM) $(CGI_BIN)
 
 .PHONY: re
 re: fclean all

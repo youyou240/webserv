@@ -3,3 +3,4 @@ CLAUDE.md
 test/
 *.o
 Webserv
+www/cgi-bin/hello.cgi

@@ -17,6 +17,7 @@ class Router {
 	Router &	operator=(Router const &);
 
 	bool			resolveFsPath(LocationConfig const & loc, std::string & out) const;
+	static bool		mapPath(LocationConfig const & loc, std::string const & path, std::string & out);
 	HttpResponse		handleGet(LocationConfig const & loc, std::string const & fsPath) const;
 	HttpResponse		handlePost(LocationConfig const & loc) const;
 	HttpResponse		handleDelete(std::string const & fsPath) const;
@@ -32,5 +33,15 @@ public:
 
 	HttpResponse	run(void);
 
+	struct CgiTarget {
+		bool		isCgi;
+		bool		valid;
+		std::string	scriptPath;
+		std::string	interpreter;
+
+		CgiTarget(void);
+	};
+
 	static LocationConfig const *	matchLocation(ServerConfig const & config, std::string const & path);
+	static CgiTarget		resolveCgi(ServerConfig const & config, std::string const & path);
 };

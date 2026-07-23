@@ -19,6 +19,7 @@ int	main(int argc, char **argv)
 		Epoll &		epoll = Epoll::createEpoll();
 		ServerManager	manager(epoll);
 		std::signal(SIGINT, ServerManager::handleSigEvent);
+		std::signal(SIGPIPE, SIG_IGN);
 		manager.build(parser.getServers());
 		manager.run();
 	} catch (std::exception & e) {

@@ -84,13 +84,13 @@ Epoll & Epoll::createEpoll(void) { static Epoll epoll; return epoll; }
 
 **Comment.** On n'utilise `fcntl` que sous la forme `fcntl(fd, F_SETFL, O_NONBLOCK)`. Aucun `F_GETFL` combiné, aucun autre flag.
 
-## A.8 — `fork` uniquement pour le CGI ⬜
+## A.8 — `fork` uniquement pour le CGI ✅
 
 **Exigence.** `fork` nulle part sauf pour exécuter un CGI.
 
 **Pourquoi.** Le serveur est mono-process (hors CGI) ; forker ailleurs briserait le modèle.
 
-**État.** Aucun `fork` dans le code actuel. Il **apparaîtra uniquement** dans le module CGI (Partie E). À la revue : `grep -rn fork` ne doit renvoyer que le code CGI.
+**État.** Le **seul** `fork` du programme est dans `Cgi::start` (Partie E). Vérifiable : `grep -rn fork` ne renvoie que `Cgi/CgiClass.cpp`.
 
 ## A.9 — Pas d'`execve` d'un autre serveur web ✅
 
@@ -245,9 +245,9 @@ Voir **C.5** (même chantier, `Expect: 100-continue` inclus).
 
 **État.** Headers de réponse conformes (`Server`, `Date` GMT, `Content-Length` **calculé**, `Content-Type`, `Connection`), keep-alive géré. À revalider dans un vrai navigateur une fois GET/POST/DELETE complets. **Référence : `HTTP_REQUESTS.md` §18.**
 
-## C.13 — CGI par extension ⬜
+## C.13 — CGI par extension ✅
 
-Voir **Partie E**.
+Voir **Partie E** (GET + POST, C/Python/PHP).
 
 ## C.14 — Timeouts + déconnexions propres ✅
 
@@ -275,19 +275,21 @@ Voir **A.10** et `ARCHITECTURE.md` acte 8.
 | `autoindex` (on/off) | server/loc | ✅ | `Router::autoIndex` (listing HTML) / `403` si off |
 | `index` (fichier par défaut) | server/loc | ✅ | `Router::handleGet` |
 | `upload_store` (dossier upload) | location | ✅ | `Router::handlePost` → `Router/Upload` |
-| `cgi` (par extension) | location | ⬜ | modèle ✅, exécution ⬜ (E) |
+| `cgi` (par extension) | server/loc | ✅ | GET+POST (`Cgi`), interpréteur optionnel (C/py/php) |
 
 **Note `client_max_body_size` par location.** ✅ Résolu. Le « problème de timing » (la limite doit être posée dès `headersDone`, avant de lire le body) est levé en matchant la location **tôt** : `Client::resolveMaxBodySize` appelle `Router::matchLocation(cfg, path)` — le path est disponible dès la request line, donc avant les headers. Un upload vers `/uploads` bénéficie bien de sa limite `10m`, pas du `1m` du server. **Référence : `HTTP_REQUESTS.md` §17.9.**
 
 ---
 
-# Partie E — CGI (⬜ dans son ensemble)
+# Partie E — CGI ✅ (GET + POST)
 
 **Exigence.** CGI par extension (`.py`, `.php`…), env vars complètes, dé-chunk avant passage, EOF = fin si pas de `Content-Length` en sortie, `chdir` dans le bon dossier, communication `pipe`+`fork`+`execve`, **FD pipe non-bloquants et gérés par le poll**.
 
-**Pourquoi c'est le morceau le plus délicat.** Le CGI introduit de **nouveaux FD** (les pipes) qui doivent passer par l'**unique** epoll comme tout le reste (A.2/A.3). Un `read`/`write` direct sur un pipe CGI = note 0. Et il y a un risque de **deadlock** (le CGI attend tout le body pendant qu'on attend sa sortie).
+**Pourquoi c'est le morceau le plus délicat.** Le CGI introduit de **nouveaux FD** (les pipes) qui doivent passer par l'**unique** epoll (A.2/A.3). Un `read`/`write` direct sur un pipe CGI = note 0. Risque de **deadlock**, de **zombies**, de **fuites**.
 
-**Comment on le fera (l'architecture est déjà prête).** Le pattern polymorphe `Arole` a été conçu exactement pour ça : on créera une sous-classe **`CgiProcess : public Arole`** (ou `CgiPipe`), on l'enregistrera avec `manager.add(...)`, et le même epoll surveillera ses pipes. `fork` (le **seul** du programme), `execve` de l'interpréteur, `chdir` dans le dossier du script, env vars construites depuis la requête (méthode, path, query en `QUERY_STRING`, headers…), body dé-chunké fourni sur stdin, sortie lue jusqu'à EOF si pas de `Content-Length`. `waitpid` pour récupérer le statut. **Point d'insertion routing : avant `handleGet`, sur détection d'une extension présente dans `location.cgi`.** **Référence : CLAUDE.md §4 + `ARCHITECTURE.md` épilogue (« Le CGI sera un nouveau `Arole` »).**
+**Comment ✅.** Moteur `Cgi/CgiClass` : coordinateur **`Cgi`** (possédé par le `Client`) + **`CgiOut`** (pipe stdout) et **`CgiIn`** (pipe stdin), tous deux **`public Arole`** dans l'epoll unique — le pattern annoncé. `Router::resolveCgi` détecte + résout le script (anti-traversal partagé) ; `Client::tryStartCgi` (**GET et POST**) fork/`pipe`/`dup2`/`chdir`/`execve`. **Interpréteur optionnel** → **C** (binaire direct), **Python**, **PHP**. Env CGI/1.1 complet. **POST** : le corps (dé-chunké) est écrit sur `stdin` via `CgiIn` (les deux pipes en epoll → pas de deadlock), `SIGPIPE` ignoré. Sortie lue jusqu'à **EOF**, parsée (`Status:`/`Content-Type:`), `502` si vide. **Robustesse** : timeout `504` + `kill`, reap non-bloquant (`waitpid(WNOHANG)`, pas de zombie), `FD_CLOEXEC` (CGI concurrents), suppression **différée** des pipes (anti use-after-free), teardown si le client part. **`fork` uniquement ici** (A.8). Scripts : `www/cgi-bin/hello.{c,py,php}` (renvoient aussi le corps en POST). **Détail complet : `docs/CGI.md`.**
+
+**Reste (raffinements ⬜).** `PATH_INFO`, et `FD_CLOEXEC` global (epoll/sockets d'écoute, pas seulement les pipes).
 
 ---
 
@@ -316,7 +318,7 @@ Voir **A.10** et `ARCHITECTURE.md` acte 8.
 | A.5 | Pas d'`errno` après read/write | ✅ |
 | A.6 | FD socket/pipe non-bloquants | ✅ |
 | A.7 | `fcntl` macOS restreint | ✅ |
-| A.8 | `fork` seulement CGI | ⬜ (aucun fork encore) |
+| A.8 | `fork` seulement CGI | ✅ (fork dans `Cgi::start` uniquement) |
 | A.10 | Timeouts | ✅ |
 | A.12 | Pas de fuite mémoire/FD | ✅ |
 | B | Lancement + Makefile | ✅ |
@@ -333,7 +335,7 @@ Voir **A.10** et `ARCHITECTURE.md` acte 8.
 | C.14 | Timeouts + déconnexions | ✅ |
 | C.15 | Tests de stress | ⬜ |
 | D | Directives config | 🟡 |
-| E | CGI | ⬜ |
+| E | CGI | ✅ (GET + POST) |
 | F.1 | README | ⬜ |
 
-**GET, POST/upload, DELETE, redirections, autoindex, pages d'erreur, 100-continue : faits.** Il ne reste plus, côté mandatory, que le **CGI** (Partie E — le gros morceau, isolé), puis le **README** (F.1) et les **tests de stress** (C.15). Le code de statut `504` (timeout) est à trancher, surtout au moment du CGI.
+**Toutes les features mandatory du moteur/HTTP sont faites** : GET, POST/upload, DELETE, redirections, autoindex, pages d'erreur, 100-continue, et **CGI (GET + POST, C/Python/PHP)**. Il ne reste, côté livraison, que le **README** (F.1) et les **testeurs de stress** (C.15) — plus les raffinements optionnels (bonus cookies/sessions, `PATH_INFO`, `FD_CLOEXEC` global). Le code de statut `504` (timeout) est à trancher, surtout au moment du CGI.

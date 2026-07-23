@@ -129,9 +129,9 @@ LocationConfig const *	Router::matchLocation(ServerConfig const & config, std::s
 	return (best);
 }
 
-bool	Router::resolveFsPath(LocationConfig const & loc, std::string & out) const
+bool	Router::mapPath(LocationConfig const & loc, std::string const & path, std::string & out)
 {
-	std::string	remainder = _req.getPath().substr(loc.path.size());
+	std::string	remainder = path.substr(loc.path.size());
 	std::string	normalized;
 
 	if (!normalizeRemainder(remainder, normalized))
@@ -143,6 +143,54 @@ bool	Router::resolveFsPath(LocationConfig const & loc, std::string & out) const
 	if (out.empty())
 		out = "/";
 	return (true);
+}
+
+bool	Router::resolveFsPath(LocationConfig const & loc, std::string & out) const
+{
+	return (Router::mapPath(loc, _req.getPath(), out));
+}
+
+static std::string	extensionOf(std::string const & path)
+{
+	size_t	slash = path.find_last_of('/');
+	size_t	dot = path.find_last_of('.');
+
+	if (dot == std::string::npos)
+		return ("");
+	if (slash != std::string::npos && dot < slash)
+		return ("");
+	return (path.substr(dot));
+}
+
+Router::CgiTarget::CgiTarget(void) : isCgi(false), valid(false)
+{
+}
+
+Router::CgiTarget	Router::resolveCgi(ServerConfig const & config, std::string const & path)
+{
+	CgiTarget		t;
+	LocationConfig const *	loc = Router::matchLocation(config, path);
+
+	if (loc == NULL || loc->cgi.empty())
+		return (t);
+
+	std::string	fsPath;
+	if (!Router::mapPath(*loc, path, fsPath))
+		return (t);
+
+	std::string	ext = extensionOf(fsPath);
+	std::map<std::string, std::string>::const_iterator	it = loc->cgi.find(ext);
+	if (it == loc->cgi.end())
+		return (t);
+
+	t.isCgi = true;
+	t.scriptPath = fsPath;
+	t.interpreter = it->second;
+
+	struct stat	st;
+	if (stat(fsPath.c_str(), &st) == 0 && S_ISREG(st.st_mode))
+		t.valid = true;
+	return (t);
 }
 
 HttpResponse	Router::serveFile(std::string const & fsPath) const

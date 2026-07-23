@@ -221,13 +221,14 @@ void	ConfigParser::handleUploadStore(ServerConfig & server, LocationConfig * loc
 
 void	ConfigParser::handleCgi(ServerConfig & server, LocationConfig * location, std::vector<Token> const & args, size_t line)
 {
-	if (args.size() != 2)
-		fail("'cgi' expects an extension and an interpreter path", line);
+	if (args.size() != 1 && args.size() != 2)
+		fail("'cgi' expects an extension and an optional interpreter path", line);
 	std::string	ext = args[0].value;
 	if (ext.empty() || ext[0] != '.')
 		fail("'cgi' extension must start with '.'", line);
+	std::string	interpreter = (args.size() == 2) ? args[1].value : "";
 	if (location)
-		location->cgi[ext] = args[1].value;
+		location->cgi[ext] = interpreter;
 	else
-		server.cgi[ext] = args[1].value;
+		server.cgi[ext] = interpreter;
 }

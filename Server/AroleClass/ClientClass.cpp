@@ -3,6 +3,7 @@
 # include "../../Epoll/epollClass.hpp"
 # include "../../Http/HttpResponseClass.hpp"
 # include "../../Router/RouterClass.hpp"
+# include "../../Cgi/CgiClass.hpp"
 # include <sys/epoll.h>
 
 std::map<int, std::map<int, Client *> > Arole::_activeClient;
@@ -18,7 +19,7 @@ static std::string	toLowerCopy(std::string const & s)
 	return (out);
 }
 
-Client::Client(int fd, Acceptor const & parent) : Arole(fd), _acceptor(&parent), _acceptorfd(parent.getFD()), _bytes_send(0), _draining(false), _closeAfterWrite(false), _limitApplied(false), _continueHandled(false), _sendingContinue(false), _lastActivity(time(NULL)), _requestStart(0)
+Client::Client(int fd, Acceptor const & parent) : Arole(fd), _acceptor(&parent), _acceptorfd(parent.getFD()), _cgi(NULL), _bytes_send(0), _draining(false), _closeAfterWrite(false), _limitApplied(false), _continueHandled(false), _sendingContinue(false), _lastActivity(time(NULL)), _requestStart(0)
 {
 	this->_client += 1;
 	_activeClient[_acceptorfd].insert(std::pair<int, Client *>(_fd, this));
@@ -121,6 +122,55 @@ void	Client::genErrorResponse(int code)
 	_bytes_send = 0;
 }
 
+bool	Client::tryStartCgi(Epoll & manager)
+{
+	std::string	method = _request.getMethod();
+	if (method != "GET" && method != "POST")
+		return (false);
+
+	const Server *	srv = this->selectVhost();
+	if (srv == NULL)
+		return (false);
+
+	Router::CgiTarget	target = Router::resolveCgi(srv->getConfig(), _request.getPath());
+	if (!target.isCgi)
+		return (false);
+
+	if (!target.valid)
+	{
+		this->genErrorResponse(404);
+		_closeAfterWrite = true;
+		_ev.events = EPOLLOUT;
+		manager.mod(this);
+		return (true);
+	}
+
+	_cgi = new Cgi(*this, _request, target.scriptPath, target.interpreter);
+	if (!_cgi->start(manager))
+	{
+		delete _cgi;
+		_cgi = NULL;
+		this->genErrorResponse(500);
+		_closeAfterWrite = true;
+		_ev.events = EPOLLOUT;
+		manager.mod(this);
+		return (true);
+	}
+	_ev.events = 0;
+	manager.mod(this);
+	return (true);
+}
+
+void	Client::deliverCgiResponse(std::string const & response, Epoll & manager)
+{
+	_cgi = NULL;
+	_response = response;
+	_bytes_send = 0;
+	_closeAfterWrite = !_request.isKeepAlive();
+	_ev.events = EPOLLOUT;
+	manager.mod(this);
+}
+
 void	Client::handle_event(Epoll & manager, uint32_t events)
 {
 	if (events & (EPOLLERR | EPOLLHUP))
@@ -177,6 +227,8 @@ bool	Client::handleRead(Epoll & manager)
 	}
 	if (_request.isComplete())
 	{
+		if (this->tryStartCgi(manager))
+			return (false);
 		this->genResponse();
 		_closeAfterWrite = !_request.isKeepAlive();
 		_ev.events = EPOLLOUT;
@@ -245,6 +297,12 @@ bool	Client::getInactiveTime(time_t now) const
 
 void	Client::closeConnection(Epoll & manager)
 {
+	if (_cgi != NULL)
+	{
+		Cgi *	c = _cgi;
+		_cgi = NULL;
+		c->clientGone(manager);
+	}
 	manager.del(this);
 	delete this;
 }

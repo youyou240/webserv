@@ -198,13 +198,17 @@ Le handler `SIGINT` ne fait que poser un `volatile sig_atomic_t` (le seul type m
 - Ne supprime **que** des fichiers réguliers (dossier → `403`) ; droits respectés (échec `std::remove` → `403`) ; `404` si absent.
 - **Contrainte** : suppression via `std::remove` (`<cstdio>`), `unlink` n'étant pas dans la liste autorisée — à valider avec l'évaluateur.
 
-### 7.3 CGI ⬜
-- Le CGI **exécute du code arbitraire** : c'est la partie la plus sensible.
-- **Injection via variables d'environnement** : passer la requête (méthode, `QUERY_STRING` gardée brute, headers) sans permettre d'injecter des variables parasites.
-- **FD pipe non-bloquants et gérés par le poll** (comme tout le reste, cf. `ARCHITECTURE.md`) — sinon note 0 **et** risque de blocage.
-- **Timeout sur le CGI** : un script qui ne finit jamais ne doit pas figer un slot (→ `504`).
-- `chdir` dans le bon dossier, `fork` **uniquement ici**, `waitpid` pour ne pas laisser de zombies (fuite de process).
-- Risque de **deadlock** : le CGI attend tout le body pendant qu'on attend sa sortie — gérer lecture/écriture des pipes via epoll.
+### 7.3 CGI ✅ (GET + POST — voir `docs/CGI.md`)
+- Le CGI **exécute du code arbitraire** : la partie la plus sensible. On ne lance que si le script **existe** et est **régulier**, chemin résolu par le **même anti-traversal** que le GET (`resolveCgi`→`mapPath`, §3.1).
+- **Pipes stdin+stdout non-bloquants et dans l'epoll unique** ✅ (jamais de `read`/`write` sans readiness ; les deux ensemble → **pas de deadlock**).
+- **Timeout `504` + `kill`** ✅ (un script infini ne fige pas un slot).
+- **Pas de zombie** ✅ : `waitpid(WNOHANG)` + moisson par `Cgi::routine` (jamais de `waitpid` **bloquant** qui figerait le serveur mono-thread).
+- **`SIGPIPE` ignoré** ✅ (`main`) : écrire sur un pipe dont le lecteur est mort ne tue pas le serveur.
+- **Suppression différée des pipes** ✅ : anti use-after-free si le client part dans le même lot d'événements (cf. §3.7 même idée, et `docs/CGI.md` §7).
+- **`FD_CLOEXEC` sur les pipes** ✅ (évite qu'un 2ᵉ CGI hérite du pipe du 1ᵉ → EOF jamais reçu).
+- **`fork` uniquement dans `Cgi::start`** ✅ (A.8).
+- **Env** : les headers passent en `HTTP_*` tels quels ; `REDIRECT_STATUS=200` pour php-cgi.
+- **Reste ⬜** : `FD_CLOEXEC` **global** (epoll/sockets d'écoute/clients ne devraient pas fuir dans le processus CGI — aujourd'hui seuls les pipes sont protégés).
 
 ---
 

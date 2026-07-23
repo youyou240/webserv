@@ -22,6 +22,7 @@
 class Client;
 class Epoll;
 class Server;
+class Cgi;
 
 class Arole {
 
@@ -83,6 +84,7 @@ class Client : public Arole {
 
 	HttpRequest	_request;
 	std::string	_response;
+	Cgi *		_cgi;
 
 	unsigned int	_bytes_send;
 
@@ -100,6 +102,7 @@ class Client : public Arole {
 	const Server *	selectVhost(void) const;
 	size_t		resolveMaxBodySize(void) const;
 	bool		wantsContinue(void) const;
+	bool		tryStartCgi(Epoll & manager);
 
 public:
 
@@ -113,6 +116,7 @@ public:
 
 	void	genResponse(void);
 	void	genErrorResponse(int code);
+	void	deliverCgiResponse(std::string const & response, Epoll & manager);
 	void	cleanRequest(void);
 	void	cleanResponse(void);
 
