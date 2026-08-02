@@ -34,7 +34,7 @@ server {
 
 ## 2. Lexique (tokenizer)
 
-Le parsing se fait en **deux passes** : (1) un *lexer* transforme le texte en une liste de tokens, (2) un *parser* en descente récursive consomme ces tokens.
+Le parsing se fait en **deux passes** : (1) un *lexer* transforme le texte en une liste de tokens, (2) un *parser* descendant (une fonction par niveau de grammaire) consomme ces tokens.
 
 Caractères **structurels** (chacun = un token) :
 

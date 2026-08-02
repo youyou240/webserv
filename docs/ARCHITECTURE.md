@@ -60,9 +60,9 @@ _tokens.push_back(tok);
 
 Ainsi `location /uploads {` devient trois jetons : `location` (mot), `/uploads` (mot), `{` (structurel) — et le lexer ne se demande pas encore si c'est valide.
 
-### Passe 2 — la descente récursive
+### Passe 2 — l'analyse descendante
 
-Avec les jetons en main, on les lit par **descente récursive** : une fonction par niveau de grammaire, qui s'appellent en cascade.
+Avec les jetons en main, on les lit **de haut en bas** : une fonction par niveau de grammaire, qui s'appellent en cascade, chacune décidant quoi faire à partir du **jeton suivant** (`peek()`).
 
 - `parseServer` attend `server`, puis `{`, puis une suite d'items jusqu'à `}`.
 - Chaque item est soit un bloc `location` (→ `parseLocation`), soit une **directive** (→ `parseDirective`).
@@ -760,7 +760,7 @@ Si vous avez compris les neuf actes, vous avez compris le serveur. Le reste, ce 
 
 ### Pour réviser en 30 secondes
 
-0. La **config** est lue en premier (acte 0) : lexer → descente récursive → des `ServerConfig`, avec héritage `server`→`location` et virtual hosts sur un même `host:port`.
+0. La **config** est lue en premier (acte 0) : lexer → analyse descendante → des `ServerConfig`, avec héritage `server`→`location` et virtual hosts sur un même `host:port`.
 1. Un seul `Epoll`, un seul `epoll_wait` : c'est le seul endroit où on attend.
 2. Tout ce qu'on surveille est un `Arole` ; on retrouve le bon objet via `data.ptr` ; on appelle `handle_event` — le polymorphisme fait le tri.
 3. On réagit à **ce qui est prêt** (`events`), jamais à **ce qui nous intéresse** (`_ev.events`).

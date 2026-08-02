@@ -155,7 +155,7 @@ Epoll & Epoll::createEpoll(void) { static Epoll epoll; return epoll; }
 
 **Pourquoi.** Toute la topologie (ports, sites, routes, limites) vient de là ; une config douteuse doit être rejetée tôt.
 
-**Comment.** `Config/ConfigParser` : **lexer 2 passes** (jetons `{` `}` `;` + mots, commentaires `#`, n° de ligne) puis **descente récursive** (`parseServer`/`parseLocation`/`parseDirective`) avec handlers **stricts** (arité, placement, validation port/code/taille) et **fail-fast** avec numéro de ligne. Modèle mémoire : `ServerConfig`/`LocationConfig` (structs), **héritage `server→location` résolu à la fin du parse** (`inheritFrom`/`resolveLocations`) via des drapeaux `hasXxx`. **Référence : `CONFIG.md` (grammaire complète) + `ARCHITECTURE.md` acte 0.**
+**Comment.** `Config/ConfigParser` : **lexer 2 passes** (jetons `{` `}` `;` + mots, commentaires `#`, n° de ligne) puis **analyse descendante** (`parseServer`/`parseLocation`/`parseDirective`, une fonction par niveau de grammaire) avec handlers **stricts** (arité, placement, validation port/code/taille) et **fail-fast** avec numéro de ligne. Modèle mémoire : `ServerConfig`/`LocationConfig` (structs), **héritage `server→location` résolu à la fin du parse** (`inheritFrom`/`resolveLocations`) via des drapeaux `hasXxx`. **Référence : `CONFIG.md` (grammaire complète) + `ARCHITECTURE.md` acte 0.**
 
 ## C.2 — Écouter sur plusieurs `interface:port` ✅
 
