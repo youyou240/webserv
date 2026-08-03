@@ -15,7 +15,7 @@ static std::string	toLowerCopy(std::string const & s)
 
 	for (size_t i = 0; i < out.size(); ++i)
 		if (out[i] >= 'A' && out[i] <= 'Z')
-			out[i] = out[i] - 'A' + 'a';
+			out[i] = out[i] + 32;
 	return (out);
 }
 
