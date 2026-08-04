@@ -3,27 +3,152 @@
 <head>
 	<meta charset="utf-8">
 	<meta name="viewport" content="width=device-width, initial-scale=1">
-	<title>webserv - home</title>
+	<title>webserv - test dashboard</title>
 	<link rel="stylesheet" href="/style.css">
 </head>
 <body>
 	<header>
 		<h1>webserv</h1>
-		<p>A tiny HTTP/1.1 server written in C++98 for the 42 curriculum.</p>
+		<p>A tiny HTTP/1.1 server written in C++98 for the 42 curriculum.
+		This page exercises every feature from a real browser. Open the
+		developer tools network tab to read the actual status codes and headers.</p>
 	</header>
+
 	<main>
-		<nav aria-label="Site navigation">
+		<section aria-labelledby="static">
+			<h2 id="static">Static files and MIME types</h2>
 			<ul>
-				<li><a href="/about.html">About this server</a></li>
-				<li><a href="/uploads/hello.txt">A file under /uploads</a></li>
-				<li><a href="/private/">A directory with no index (403)</a></li>
-				<li><a href="/old">A redirect (/old -&gt; /)</a></li>
-				<li><a href="/nope.html">A missing page (404)</a></li>
+				<li><a href="/about.html">/about.html</a> <span class="badge">200</span> served as <code>text/html</code></li>
+				<li><a href="/style.css">/style.css</a> <span class="badge">200</span> served as <code>text/css</code> &mdash; the styling of this page proves it</li>
+				<li><a href="/uploads/hello.txt">/uploads/hello.txt</a> <span class="badge">200</span> served as <code>text/plain</code> from a different <code>root</code></li>
 			</ul>
-		</nav>
+		</section>
+
+		<section aria-labelledby="dirs">
+			<h2 id="dirs">Directories: index and autoindex</h2>
+			<ul>
+				<li><a href="/">/</a> <span class="badge">200</span> resolves <code>index.html</code>, autoindex is off</li>
+				<li><a href="/uploads/">/uploads/</a> <span class="badge">200</span> no index file, autoindex is on &rarr; generated listing</li>
+				<li><a href="/private/">/private/</a> <span class="badge">403</span> no index, autoindex off</li>
+			</ul>
+		</section>
+
+		<section aria-labelledby="redirect">
+			<h2 id="redirect">Redirection</h2>
+			<ul>
+				<li><a href="/old">/old</a> <span class="badge">301</span> the browser follows <code>Location:</code> back to <code>/</code></li>
+			</ul>
+		</section>
+
+		<section aria-labelledby="errors">
+			<h2 id="errors">Error pages</h2>
+			<ul>
+				<li><a href="/nope.html">/nope.html</a> <span class="badge">404</span> custom page from <code>error_page 404 /errors/404.html</code></li>
+			</ul>
+
+			<form class="probe" method="post" action="/">
+				<p>The <code>/</code> location only allows GET. Posting to it must be refused.</p>
+				<button type="submit">POST /</button>
+				<p class="hint">Expected: <strong>405 Method Not Allowed</strong> with an <code>Allow: GET</code> header.</p>
+			</form>
+		</section>
+
+		<section aria-labelledby="upload">
+			<h2 id="upload">Upload (POST)</h2>
+
+			<form class="probe" method="post" action="/uploads" enctype="multipart/form-data">
+				<p>The encoding every browser uses for file uploads.</p>
+				<label for="file">Pick a file</label>
+				<input id="file" type="file" name="file">
+				<button type="submit">POST /uploads (multipart/form-data)</button>
+				<p class="hint">Expected: <strong>201 Created</strong> and the list of files written to <code>./www/uploads</code>.</p>
+			</form>
+
+			<form class="probe" method="post" action="/uploads/notes.txt" enctype="text/plain">
+				<p>A raw body, with the target name taken from the URL instead of a part header.</p>
+				<label for="content">Text to store</label>
+				<input id="content" type="text" name="content" value="hello from the browser">
+				<button type="submit">POST /uploads/notes.txt (raw body)</button>
+				<p class="hint">Expected: <strong>201 Created</strong>, and <code>./www/uploads/notes.txt</code> now holds the raw body.</p>
+			</form>
+
+			<p>After either upload, browse <a href="/uploads/">/uploads/</a> to see the result.</p>
+		</section>
+
+		<section aria-labelledby="delete">
+			<h2 id="delete">DELETE</h2>
+			<p>HTML forms can only send GET and POST, so this one uses <code>fetch</code>.</p>
+
+			<form class="probe" id="delete-form">
+				<label for="delete-name">File name under /uploads</label>
+				<input id="delete-name" type="text" value="notes.txt">
+				<button type="submit">DELETE /uploads/&hellip;</button>
+				<p class="hint">Expected: <strong>204 No Content</strong> if the file exists,
+				<strong>404</strong> if it does not, <strong>403</strong> on a directory.</p>
+				<output id="delete-result"></output>
+			</form>
+		</section>
+
+		<section aria-labelledby="cgi">
+			<h2 id="cgi">CGI</h2>
+			<ul>
+				<li><a href="/cgi-bin/hello.py?name=jean&amp;id=42">/cgi-bin/hello.py?name=jean&amp;id=42</a> <span class="badge">200</span> Python, GET, echoes <code>QUERY_STRING</code></li>
+				<li><a href="/cgi-bin/hello.php">/cgi-bin/hello.php</a> <span class="badge">200</span> PHP, needs <code>php-cgi</code> installed</li>
+				<li><a href="/cgi-bin/hello.cgi">/cgi-bin/hello.cgi</a> <span class="badge">200</span> compiled C, run <code>cc -o www/cgi-bin/hello.cgi www/cgi-bin/hello.c</code> first, otherwise <span class="badge">404</span></li>
+			</ul>
+
+			<form class="probe" method="post" action="/cgi-bin/hello.py">
+				<p>POST sends the body on the script's stdin and it is echoed back.</p>
+				<label for="message">Message</label>
+				<input id="message" type="text" name="message" value="coucou webserv">
+				<button type="submit">POST /cgi-bin/hello.py</button>
+				<p class="hint">Expected: <strong>200</strong>, with <code>REQUEST_METHOD = POST</code> and the body printed back.</p>
+			</form>
+		</section>
+
+		<section aria-labelledby="hosts">
+			<h2 id="hosts">Virtual hosts and multiple ports</h2>
+			<ul>
+				<li><a href="http://localhost:9090/">localhost:9090</a> a second listening socket, autoindex on at the root</li>
+				<li><code>http://site-b.local:8080/</code> same socket as this page, different <code>server_name</code>.
+				Add <code>127.0.0.1 site-b.local</code> to <code>/etc/hosts</code> first, then it serves <code>./www-b</code>.</li>
+			</ul>
+		</section>
+
+		<section aria-labelledby="curl">
+			<h2 id="curl">What a browser cannot test</h2>
+			<p>These need <code>curl</code>, because the browser normalises or refuses to send them.</p>
+			<ul>
+				<li>Body over the limit &rarr; <span class="badge">413</span>:
+				<code>head -c 20000000 /dev/zero &gt; big.bin &amp;&amp; curl -T big.bin http://localhost:8080/uploads/big.bin</code></li>
+				<li>Chunked request body:
+				<code>curl -H 'Transfer-Encoding: chunked' -d @Makefile http://localhost:8080/cgi-bin/hello.py</code></li>
+				<li>Path traversal &rarr; <span class="badge">403</span>: the browser resolves <code>..</code> before sending, so use
+				<code>curl --path-as-is 'http://localhost:8080/../CLAUDE.md'</code></li>
+				<li>Unknown method &rarr; <span class="badge">501</span>:
+				<code>curl -X PATCH http://localhost:8080/</code></li>
+				<li>Unsupported version &rarr; <span class="badge">505</span>:
+				<code>printf 'GET / HTTP/2.0\r\nHost: x\r\n\r\n' | nc localhost 8080</code></li>
+			</ul>
+		</section>
 	</main>
+
 	<footer>
 		<p>Served from <code>./www/index.html</code>.</p>
 	</footer>
+
+	<script>
+	document.getElementById("delete-form").addEventListener("submit", function (event) {
+		event.preventDefault();
+
+		var name = document.getElementById("delete-name").value;
+		var out = document.getElementById("delete-result");
+
+		out.textContent = "sending...";
+		fetch("/uploads/" + encodeURIComponent(name), { method: "DELETE" })
+			.then(function (response) { out.textContent = "HTTP " + response.status; })
+			.catch(function (error) { out.textContent = "network error: " + error.message; });
+	});
+	</script>
 </body>
 </html>
