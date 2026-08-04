@@ -124,6 +124,21 @@ fork()
     new CgiOut(outPipe[0]) ; epoll.add(...)   ← le pipe entre dans l'epoll unique
 ```
 
+### b-bis) L'environnement — `Cgi::buildEnv`
+
+Variables CGI/1.1 fixes (`GATEWAY_INTERFACE`, `SERVER_PROTOCOL`, `SERVER_SOFTWARE`, `REDIRECT_STATUS`) puis celles de la requête (`REQUEST_METHOD`, `QUERY_STRING`, `SCRIPT_FILENAME`, `SCRIPT_NAME`).
+
+`CONTENT_TYPE` et `CONTENT_LENGTH` sont exportés **sans préfixe** (RFC 3875 §4.1.2/§4.1.3 — c'est sous ce nom que PHP et `cgi.FieldStorage` les lisent). `CONTENT_LENGTH` vaut **`_body.size()`**, donc la taille du corps **dé-chunké**, pas la valeur de l'en-tête reçu : le script n'a jamais à savoir que la requête était chunked.
+
+Les autres en-têtes deviennent `HTTP_<NOM>` : préfixe `HTTP_`, nom en **majuscules**, `-` → `_`, valeur inchangée. Les clés de `_headers` étant déjà minusculées par le parseur, `Host`/`HOST`/`hOsT` produisent tous `HTTP_HOST`.
+
+**Filtre `isExcludedFromEnv`** — deux familles ne partent pas dans l'environnement :
+
+1. Les en-têtes **hop-by-hop** (RFC 7230 §6.1) : `connection`, `keep-alive`, `proxy-authenticate`, `proxy-authorization`, `te`, `trailer`, `transfer-encoding`, `upgrade`. Ils décrivent la **connexion TCP** entre le client et nous, pas le message ; le CGI est un nouveau saut et n'en a que faire. `HTTP_TRANSFER_ENCODING=chunked` serait même un mensonge, le corps ayant déjà été dé-chunké. On y ajoute `content-type`/`content-length`, déjà exportés sous leur nom canonique (éviter le doublon `HTTP_*`, qu'Apache ne produit pas non plus).
+2. Les noms contenant un **`_`** — cf. `SECURITY.md` §7.3.
+
+Liste **noire** et non blanche : l'ensemble à exclure est fermé et normalisé par la RFC, alors que l'ensemble utile est ouvert (n'importe quel `X-Mon-Truc` applicatif doit passer).
+
 ### c) Lecture du `stdout` — `CgiOut::handle_event`
 L'`epoll` réveille `CgiOut` quand le pipe a des données. On `read` un morceau, on l'ajoute à `_output`, et on **rend la main** (jamais bloquant, comme pour un socket). Quand `read` renvoie **0**, c'est l'**EOF** : le script a fini d'écrire (il a fermé `stdout`, généralement en se terminant).
 
@@ -215,7 +230,7 @@ curl -v -X POST --data-binary @Makefile http://localhost:8080/cgi-bin/hello.py
 
 - Le CGI **exécute du code arbitraire** : c'est la partie la plus sensible.
 - On ne lance un CGI que si le script **existe** et est un **fichier régulier** ; le chemin passe par le **même anti-traversal** que le GET (`resolveCgi` → `mapPath`).
-- L'environnement transmet les en-têtes en `HTTP_*` : on ne transmet que ce que le client a envoyé, tel quel.
+- L'environnement transmet les en-têtes en `HTTP_*` : on ne transmet que ce que le client a envoyé, tel quel — **sauf** les hop-by-hop et les noms contenant `_`, filtrés par `isExcludedFromEnv` (cf. §5 b-bis et `SECURITY.md` §7.3).
 - **Timeout + kill** empêchent un script de monopoliser le serveur.
 
 ---

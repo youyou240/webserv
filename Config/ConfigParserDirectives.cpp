@@ -31,12 +31,14 @@ int	ConfigParser::parseCode(std::string const & str, size_t line) const
 
 size_t	ConfigParser::parseSize(std::string const & str, size_t line) const
 {
+	if (str.empty())
+		fail("invalid size (empty)", line);
+
 	char		suffix = str[str.size() - 1];
 	unsigned long	multiplier = 1;
 	std::string	digits = str;
+	size_t		value = 0;
 
-	if (str.empty())
-		fail("invalid size (empty)", line);
 	if (suffix == 'k' || suffix == 'K')
 		multiplier = 1024UL;
 	else if (suffix == 'm' || suffix == 'M')
@@ -48,10 +50,17 @@ size_t	ConfigParser::parseSize(std::string const & str, size_t line) const
 	if (digits.empty())
 		fail("invalid size '" + str + "'", line);
 	for (size_t i = 0; i < digits.size(); ++i)
+	{
 		if (digits[i] < '0' || digits[i] > '9')
 			fail("invalid size '" + str + "' (not numeric)", line);
-	unsigned long	value = std::strtoul(digits.c_str(), NULL, 10);
-	return (static_cast<size_t>(value * multiplier));
+		size_t	digit = static_cast<size_t>(digits[i] - '0');
+		if (value > (static_cast<size_t>(-1) - digit) / 10)
+			fail("invalid size '" + str + "' (value too large)", line);
+		value = value * 10 + digit;
+	}
+	if (value > static_cast<size_t>(-1) / multiplier)
+		fail("invalid size '" + str + "' (value too large)", line);
+	return (value * multiplier);
 }
 
 void	ConfigParser::handleListen(ServerConfig & server, LocationConfig * location, std::vector<Token> const & args, size_t line)

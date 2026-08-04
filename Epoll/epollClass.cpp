@@ -3,7 +3,7 @@
 #include <sys/epoll.h>
 #include <unistd.h>
 
-Epoll::Epoll(void) : _events(MIN_MAX)
+Epoll::Epoll(void) : _events(MAX_EPOLL_EVENTS)
 {
 	_fd = epoll_create(1);
 	if (_fd == -1)

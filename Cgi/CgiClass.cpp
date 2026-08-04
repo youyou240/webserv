@@ -41,6 +41,20 @@ static void	splitScriptPath(std::string const & path, std::string & dir, std::st
 	}
 }
 
+static bool	isExcludedFromEnv(std::string const & name)
+{
+	static char const *	excluded[] = {
+		"connection", "keep-alive", "proxy-authenticate", "proxy-authorization",
+		"te", "trailer", "transfer-encoding", "upgrade",
+		"content-type", "content-length", NULL
+	};
+
+	for (size_t i = 0; excluded[i] != NULL; ++i)
+		if (name == excluded[i])
+			return (true);
+	return (name.find('_') != std::string::npos);
+}
+
 CgiOut::CgiOut(int fd, Cgi * cgi) : Arole(fd), _cgi(cgi), _dead(false)
 {
 	_ev.events = EPOLLIN;
@@ -155,6 +169,8 @@ std::vector<std::string>	Cgi::buildEnv(void) const
 
 	for (std::map<std::string, std::string>::const_iterator it = _headers.begin(); it != _headers.end(); ++it)
 	{
+		if (isExcludedFromEnv(it->first))
+			continue ;
 		std::string	name = "HTTP_";
 		for (size_t i = 0; i < it->first.size(); ++i)
 		{

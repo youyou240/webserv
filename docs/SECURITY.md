@@ -208,6 +208,8 @@ Le handler `SIGINT` ne fait que poser un `volatile sig_atomic_t` (le seul type m
 - **`FD_CLOEXEC` sur les pipes** ✅ (évite qu'un 2ᵉ CGI hérite du pipe du 1ᵉ → EOF jamais reçu).
 - **`fork` uniquement dans `Cgi::start`** ✅ (A.8).
 - **Env** : les headers passent en `HTTP_*` tels quels ; `REDIRECT_STATUS=200` pour php-cgi.
+- **Aliasing tiret/underscore dans l'env** ✅ : la conversion CGI écrase `-` et `_` sur le **même** caractère, donc `X-Forwarded-For` et `X_Forwarded_For` — deux en-têtes **distincts** sur le fil, qu'aucun proxy en amont ne confond — produiraient **la même** variable `HTTP_X_FORWARDED_FOR`, l'une écrasant l'autre selon l'ordre de la `std::map` (et `_` = 0x5F trie **après** `-` = 0x2D, donc la version injectée gagnerait). Un script CGI qui déciderait d'une autorisation ou d'un log sur un `HTTP_X_*` serait donc trompable. Défense : `isExcludedFromEnv` (`Cgi/CgiClass.cpp`) **écarte de l'environnement tout nom d'en-tête contenant `_`** — c'est la règle `underscores_in_headers off` de NGINX, qui est son défaut. Aucun client légitime n'utilise l'underscore (la convention HTTP est le tiret), le coût est nul. Filtrage fait dans `buildEnv` et **pas** dans le parseur : sur le fil les deux noms sont non ambigus, l'ambiguïté naît de la conversion CGI — on corrige là où elle apparaît, sans changer le comportement HTTP du reste du serveur.
+- **Hop-by-hop non transmis** ✅ : `connection`, `keep-alive`, `proxy-authenticate`, `proxy-authorization`, `te`, `trailer`, `transfer-encoding`, `upgrade` (RFC 7230 §6.1) décrivent la connexion TCP client↔webserv, pas le message. Le CGI est un **nouveau saut** : lui annoncer `HTTP_TRANSFER_ENCODING=chunked` alors qu'il reçoit un corps **déjà dé-chunké** l'inciterait à dé-chunker une seconde fois. Liste **noire** (ensemble fermé, normatif) et non blanche (l'ensemble des en-têtes applicatifs utiles est ouvert). Cf. `docs/CGI.md` §5 b-bis.
 - **Reste ⬜** : `FD_CLOEXEC` **global** (epoll/sockets d'écoute/clients ne devraient pas fuir dans le processus CGI — aujourd'hui seuls les pipes sont protégés).
 
 ---
@@ -225,6 +227,7 @@ Le handler `SIGINT` ne fait que poser un `volatile sig_atomic_t` (le seul type m
 | Fichier spécial (`/dev`, FIFO) | DoS/fuite | entrée | `S_ISREG`/`S_ISDIR` seulement | §3.3 |
 | Divulgation d'arborescence | fuite | entrée | `autoindex off` → `403` | §3.5 |
 | **XSS (nom de fichier)** | **injection** | **sortie** | **échappement HTML** (`htmlEscape`, 5 caractères) | **§4.1** |
+| Aliasing `-`/`_` dans l'env CGI | injection | entrée | noms contenant `_` écartés de `HTTP_*` | §7.3 |
 | Response desync | injection | sortie | `Content-Length` calculé | §4.2 |
 | error_page cassée | DoS | sortie | fallback sans récursion | §4.3 |
 | Double-close / FD réutilisé | corruption | process | `close` unique dans `~Arole` | §5.1 |

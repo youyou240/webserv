@@ -159,7 +159,7 @@ Le mot-clé `static` ici est malin : la variable `epoll` n'est créée **qu'une 
 À sa naissance, l'`Epoll` demande au noyau de lui créer son instance de surveillance :
 
 ```cpp
-Epoll::Epoll(void) : _events(MIN_MAX)
+Epoll::Epoll(void) : _events(MAX_EPOLL_EVENTS)
 {
     _fd = epoll_create(1);
     if (_fd == -1)

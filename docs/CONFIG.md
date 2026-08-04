@@ -99,6 +99,7 @@ Légende **Hérite** : la valeur du `server` sert de défaut à la `location` qu
 
 - **`listen`** : plusieurs `listen` possibles (multi-port). Les `server` qui partagent un même `host:port` sont **regroupés sur un seul socket** (cf. §6).
 - **`client_max_body_size`** : suffixe insensible à la casse. `1k` = 1024, `1m` = 1024², `1g` = 1024³. Sans suffixe = octets bruts. Dépasser cette taille sur un body de requête → **413**.
+  Validation (`ConfigParser::parseSize`) : un suffixe **non reconnu** reste dans la partie numérique et se fait rejeter par le contrôle des chiffres (`50x` → *not numeric*) ; un suffixe **seul** (`m`) → *invalid size* ; une valeur qui **déborderait** `size_t`, avant ou après application du multiplicateur (`99999999999g`, `99999999999999999999999`) → *value too large*. La conversion se fait chiffre par chiffre avec contrôle de débordement **avant** chaque accumulation (`value > (SIZE_MAX - digit) / 10`) puis avant la multiplication finale (`value > SIZE_MAX / multiplier`) : jamais de bouclage silencieux qui donnerait une limite plus petite que demandée.
 - **`methods`** : une méthode hors liste reçue par le serveur → **405** (avec header `Allow`).
 - **`error_page`** : `error_page 404 /errors/404.html;` ou plusieurs codes `error_page 500 502 503 /errors/5xx.html;`. Fusion à l'héritage (les codes du server sont conservés sauf ceux redéfinis par la location).
 - **`return`** : `return 301 http://exemple.com/;` (redirection). Court-circuite le reste du traitement de la location.
