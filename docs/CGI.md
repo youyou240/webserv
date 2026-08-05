@@ -232,6 +232,27 @@ Les `hello.*` prouvent que le CGI **s'exécute**. Le livre d'or prouve qu'il **f
 
 Le stockage est volontairement bête (une ligne par message, champs percent-encodés séparés par des tabulations, plafond `MAX_ENTRIES`) : c'est un script de démonstration, pas une base de données.
 
+## 9ter. La session — `www/cgi-bin/session.py`
+
+Le livre d'or prouve que le CGI fonctionne ; celui-ci prouve que le serveur sait **maintenir un état entre deux requêtes**. C'est le bonus « cookies + gestion de session » du sujet.
+
+Le partage des rôles est le point à défendre : **le serveur ne connaît rien aux sessions**. Il transporte deux en-têtes — `Cookie` à l'aller (devenu `HTTP_COOKIE` dans l'environnement), `Set-Cookie` au retour — et c'est tout. L'identifiant, le stockage, l'expiration, la déconnexion : tout vit dans le script. C'est la répartition correcte, et c'est aussi ce qui explique qu'un seul changement C++ ait suffi (cf. `docs/HEADERS.md` §6.2).
+
+| Ce qu'on voit | Ce que ça prouve |
+|---|---|
+| Première visite : **deux** lignes `Set-Cookie` dans la réponse | `HttpResponse` est passé en `std::multimap` — une `map` en aurait perdu une **en silence** |
+| Rechargement : « session reconnue », compteur qui monte | le navigateur a renvoyé `Cookie:`, le serveur l'a transmis en `HTTP_COOKIE`, le script a retrouvé son enregistrement |
+| Le compteur et le pseudo **ne sont pas** dans le cookie | seul l'identifiant circule ; l'état est dans `sessions.txt`, en chemin **relatif** (donc encore une preuve du `chdir`) |
+| L'en-tête `Cookie` brut affiché sur la page | ce que le navigateur envoie réellement : des paires `nom=valeur` séparées par `; `, **sans aucun attribut** |
+| `document.cookie` n'affiche **pas** `session_id` | l'attribut `HttpOnly` fait son travail — `last_seen`, posé sans lui, est bien visible juste à côté |
+| « se déconnecter » → la session repart de zéro | `Max-Age=0` sur le **même `Path`**, puis *Post/Redirect/Get* (`Location:` seul → `302` implicite, comme le livre d'or) |
+
+**Le piège du `Path`.** Sans attribut explicite, la portée par défaut d'un cookie est le **répertoire de l'URL qui l'a posé** — soit `/cgi-bin`. Le cookie ne serait alors jamais renvoyé à `/index.html`, et on conclurait à tort que le serveur perd les cookies. Tous les cookies du script portent `Path=/`, **à la pose comme à la suppression** : une expiration sur un `Path` différent ne remplace pas le cookie, elle en crée un **second**, et le navigateur renvoie alors les deux (`Cookie: session_id=A; session_id=B`) sans qu'on puisse les distinguer.
+
+**Ce qui est validé** (cf. `docs/SECURITY.md` §7.3) : l'identifiant reçu est une donnée client, donc vérifié « exactement 32 hexadécimaux » avant toute recherche ; le pseudo est borné, percent-encodé au stockage, HTML-échappé à l'affichage ; l'en-tête `Cookie` brut réaffiché est échappé lui aussi. L'ID est tiré de `os.urandom` — un `random` classique serait prédictible, donc devinable.
+
+Limite assumée : le fichier est réécrit entièrement à chaque requête (via un temporaire puis `os.replace`, donc jamais tronqué à mi-chemin), sans verrou. Deux requêtes strictement simultanées peuvent perdre une écriture. C'est un script de démonstration ; un vrai serveur d'application utiliserait un store partagé.
+
 ## 9. Tester (les trois langages)
 
 ```sh
@@ -266,6 +287,25 @@ curl -v -X POST --data-binary @Makefile http://localhost:8080/cgi-bin/hello.py
 ```
 
 À vérifier : la `QUERY_STRING` est bien transmise, le `Content-Type` du script est respecté, et un `Status:` dans le script change bien le code HTTP.
+
+**Cookies et session** (§9ter) — `-c` écrit le pot de cookies, `-b` le renvoie : deux appels successifs reproduisent exactement ce que fait un navigateur.
+
+```sh
+curl -i http://localhost:8080/cgi-bin/session.py
+# -> 200, et DEUX lignes Set-Cookie : session_id (HttpOnly) et last_seen
+# une seule ligne = le passage en multimap n'a pas pris
+
+curl -i -c jar.txt http://localhost:8080/cgi-bin/session.py   # 1re visite
+curl -i -b jar.txt http://localhost:8080/cgi-bin/session.py   # -> visites = 2
+
+curl -i -b jar.txt -d 'action=setname&name=jean' http://localhost:8080/cgi-bin/session.py
+# -> 302 + Location (PRG), le pseudo est stocke cote serveur
+
+curl -i -b jar.txt -d 'action=logout' http://localhost:8080/cgi-bin/session.py
+# -> 302, avec deux Set-Cookie en Max-Age=0
+```
+
+Le contrôle décisif est le premier : **deux lignes `Set-Cookie` distinctes**, jamais fusionnées par une virgule ni par un point-virgule.
 
 ---
 

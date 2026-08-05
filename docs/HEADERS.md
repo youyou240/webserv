@@ -259,12 +259,22 @@ Cookie: session=abc123; theme=dark; lang=fr
 
 Note : à l'aller (`Cookie`), **pas d'attributs** — juste les paires `nom=valeur`. Les attributs (`Path`, `HttpOnly`…) ne servent qu'au navigateur pour décider quoi renvoyer, ils ne repartent jamais.
 
-> **Pour notre serveur** — **bonus** (cookies + sessions, cf. sujet §V bonus).
-> Rien n'est implémenté. L'infra de headers est prête côté réponse, mais **`HttpResponse` ne gère qu'une valeur par nom** (une `map`), or il faut pouvoir émettre **plusieurs `Set-Cookie`**. Chantier bonus (cf. CLAUDE.md §8) :
-> 1. côté requête : un parseur de la ligne `Cookie:` → `map<nom, valeur>` ;
-> 2. côté réponse : autoriser **plusieurs** `Set-Cookie` (passer d'une map à une liste, ou traiter ce header à part) ;
-> 3. un `SessionStore` statique : ID aléatoire + expiration, posé en `Set-Cookie: session=…; HttpOnly; SameSite=Lax`.
-> À n'attaquer qu'une fois le mandatory parfait.
+> **Pour notre serveur** — **bonus implémenté ✅** (cookies + sessions, cf. sujet §V bonus).
+>
+> **Côté requête** : rien à ajouter. `HttpRequest` met les noms en minuscules et **rejette les caractères de contrôle** dans les valeurs (400), donc `cookie` arrive validé ; `isExcludedFromEnv` le laisse passer (pas hop-by-hop, pas de `_` dans le nom) et le CGI reçoit `HTTP_COOKIE` tel quel. Le découpage sur `; ` est fait par le script — c'est sa responsabilité, pas celle du serveur.
+>
+> **Côté réponse** : `HttpResponse::_headers` est passé de `std::map` à **`std::multimap`**, précisément parce qu'un `Set-Cookie` **ne peut pas** être fusionné avec un autre. La règle générale (RFC 7230 §3.2.2) autorise à joindre deux en-têtes de même nom par une virgule *si et seulement si* la grammaire de leur valeur est une liste séparée par des virgules ; `Set-Cookie` est **l'exception nommée** par la RFC, car sa valeur contient déjà des virgules (`Expires=Wed, 21 Oct 2026 …`). Joindre par `;` ne marche pas davantage : dans `Set-Cookie`, le `;` sépare les **attributs d'un seul cookie**, pas les cookies entre eux (l'inverse exact de la ligne `Cookie` du §6.2 — c'est la confusion classique). Un en-tête `Set-Cookie` = **exactement un cookie**, par construction ; N cookies = N lignes.
+>
+> D'où le découpage :
+> - `setHeader(k, v)` → `erase(k)` puis `insert` : sémantique « remplace », inchangée pour les ~20 appelants existants (Router, Client, CGI) ;
+> - `addHeader(k, v)` → `insert` seul : sémantique « ajoute », empruntée par `Set-Cookie` uniquement ;
+> - `serialize()` est **inchangé** : parcourir un `multimap` visite chaque élément, donc une ligne par entrée sort naturellement.
+>
+> `Cgi::buildResponse` route sur `lkey == "set-cookie"` → `addHeader`, tout le reste → `setHeader`. Pas de normalisation de casse nécessaire : le routage lit déjà `lkey` en minuscules et les noms d'en-tête sont insensibles à la casse sur le fil.
+>
+> **La session** est tenue par le script CGI, pas par le serveur : `www/cgi-bin/session.py` (cf. `docs/CGI.md` §9ter) génère un ID via `os.urandom`, le pose en `Set-Cookie: session_id=…; Path=/; HttpOnly; SameSite=Lax`, et garde l'état (compteur de visites, pseudo) dans `sessions.txt`. Seul l'identifiant circule. C'est la bonne répartition : le serveur transporte des en-têtes, l'application tient l'état.
+>
+> **Piège documenté** : sans attribut `Path`, la portée par défaut d'un cookie est le **répertoire de l'URL courante** — soit `/cgi-bin` pour nos scripts. Le cookie ne serait alors jamais renvoyé au reste du site. Tous nos cookies portent `Path=/`, à la création **comme à la suppression** (sinon `Max-Age=0` crée un second cookie au lieu d'écraser le premier).
 
 ---
 
@@ -382,7 +392,7 @@ Ajoutés par les reverse-proxies/load-balancers en amont. Utiles à connaître, 
 | Identification client (§3) | *(loggable)* | — | ignoré |
 | Négociation de contenu (§4) | — | — | hors-sujet |
 | **Cache (§5)** | — | — | **absent → cause du bug favicon ; bonus possible (`no-store`, `ETag`/`304`)** |
-| **Cookies (§6)** | — | — | **bonus (sessions)** |
+| **Cookies (§6)** | `Cookie` (→ `HTTP_COOKIE`) | `Set-Cookie` (multiples) | **bonus ✅ (sessions via CGI)** |
 | Authentification (§7) | — | — | hors-sujet |
 | Sécurité / CORS (§8) | — | — | hors-sujet (`nosniff` en durcissement optionnel) |
 | Range / redirection (§9) | — | `Location`, `Allow`, `Server` | **redirection/`405` mandatory ✅** ; Range non géré |

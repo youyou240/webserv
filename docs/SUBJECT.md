@@ -290,3 +290,35 @@ Voir **A.10** et `ARCHITECTURE.md` acte 8.
 **Comment ✅.** Moteur `Cgi/CgiClass` : coordinateur **`Cgi`** (possédé par le `Client`) + **`CgiOut`** (pipe stdout) et **`CgiIn`** (pipe stdin), tous deux **`public Arole`** dans l'epoll unique — le pattern annoncé. `Router::resolveCgi` détecte + résout le script (anti-traversal partagé) ; `Client::tryStartCgi` (**GET et POST**) fork/`pipe`/`dup2`/`chdir`/`execve`. **Interpréteur optionnel** → **C** (binaire direct), **Python**, **PHP**. Env CGI/1.1 complet. **POST** : le corps (dé-chunké) est écrit sur `stdin` via `CgiIn` (les deux pipes en epoll → pas de deadlock), `SIGPIPE` ignoré. Sortie lue jusqu'à **EOF**, parsée (`Status:`/`Content-Type:`), `502` si vide. **Robustesse** : timeout `504` + `kill`, reap non-bloquant (`waitpid(WNOHANG)`, pas de zombie), `FD_CLOEXEC` (CGI concurrents), suppression **différée** des pipes (anti use-after-free), teardown si le client part. **`fork` uniquement ici** (A.8). Scripts : `www/cgi-bin/hello.{c,py,php}` (renvoient aussi le corps en POST). **Détail complet : `docs/CGI.md`.**
 
 **Reste (raffinements ⬜).** `PATH_INFO`, et `FD_CLOEXEC` global (epoll/sockets d'écoute, pas seulement les pipes).
+
+---
+
+# Partie F — Bonus
+
+> Le sujet ne les évalue **que si le mandatory est parfait**. Ils sont listés ici pour la soutenance, pas pour compenser un manque.
+
+## F.1 — Plusieurs types de CGI ✅
+
+**Exigence.** Supporter plus d'un interpréteur CGI.
+
+**Comment ✅.** La directive `cgi <extension> [interpréteur]` rend l'interpréteur **optionnel** : absent, le script est un **binaire** exécuté directement (`www/cgi-bin/hello.cgi`, compilé depuis `hello.c`) ; présent, il est passé en `argv[0]` de l'`execve` (`cgi .py /usr/bin/python3`, `cgi .php /usr/bin/php-cgi`). **Trois langages, un seul mécanisme** — c'est le point à faire remarquer : rien dans le moteur ne connaît Python ou PHP. Cf. `docs/CGI.md` §2.
+
+## F.2 — Cookies + gestion de session ✅
+
+**Exigence.** Cookies et sessions, **avec exemples**.
+
+**Le partage des rôles, qui est le vrai sujet.** Le serveur **ne gère pas de sessions** : il transporte deux en-têtes, `Cookie` à l'aller et `Set-Cookie` au retour. L'identifiant, le stockage, l'expiration et la déconnexion vivent dans l'application — ici un script CGI. C'est la répartition correcte, et c'est ce qui explique qu'un **seul** changement C++ ait suffi.
+
+**Côté requête : rien à ajouter ✅.** `HttpRequest` met les noms d'en-tête en minuscules et **rejette les caractères de contrôle** dans les valeurs (`400`), donc `cookie` arrive validé ; `isExcludedFromEnv` le laisse passer (ni hop-by-hop, ni `_` dans le nom). Le script reçoit `HTTP_COOKIE` intact et découpe lui-même sur `; `.
+
+**Côté réponse : `std::map` → `std::multimap` ✅.** C'était le seul blocage réel, et il n'est pas cosmétique. La RFC 7230 §3.2.2 autorise à fusionner deux en-têtes de même nom par une virgule **seulement si** leur valeur est une liste séparée par des virgules — et elle nomme **`Set-Cookie` comme l'exception**, parce que sa valeur en contient déjà une (`Expires=Wed, 21 Oct 2026 …`). Fusionner par `;` ne sauve rien non plus : dans `Set-Cookie`, le `;` sépare les **attributs d'un seul cookie** (l'inverse exact de la ligne `Cookie`, où il sépare les cookies) — le second cookie serait lu comme un **attribut inconnu du premier** et jeté en silence (RFC 6265 §5.2). Un en-tête `Set-Cookie` = **un** cookie ; N cookies = N lignes. D'où `setHeader` (`erase` + `insert`, « remplace », sémantique inchangée pour les ~20 appelants) et **`addHeader`** (`insert`, « ajoute ») ; `serialize()` n'a pas bougé, parcourir un multimap visite chaque élément. `Cgi::buildResponse` route `set-cookie` → `addHeader`.
+
+**Durcissement associé ✅.** `setHeader`/`addHeader` rejettent toute valeur portant un caractère de contrôle (`hasCtl` — même prédicat que le parseur de requête). Sans cela, un `CRLF` dans une valeur **termine l'en-tête et en ouvre un autre** : *response splitting*. Le vecteur est réel dès qu'on émet des cookies, un script de session recopiant volontiers une donnée client dans un `Set-Cookie`. L'invariant est posé dans `HttpResponse` — la classe qui sérialise — donc il couvre aussi le Router et le Client.
+
+**L'exemple demandé par le sujet ✅.** `www/cgi-bin/session.py` : ID de 32 hexadécimaux tiré d'`os.urandom` (`random` serait prédictible), posé en `Set-Cookie: session_id=…; Path=/; HttpOnly; SameSite=Lax`, **plus** un second cookie `last_seen` sans `HttpOnly` dans la **même** réponse — c'est lui qui prouve le multimap à l'œil nu. La page affiche l'en-tête `Cookie` reçu, les `Set-Cookie` émis, et ce que `document.cookie` arrive à lire (`session_id` en est **absent** : démonstration visuelle de `HttpOnly`). L'état — compteur de visites, pseudo — est dans `sessions.txt`, chemin **relatif**, donc preuve supplémentaire du `chdir`. TTL 30 min, logout en `Max-Age=0` sur le **même `Path`** puis Post/Redirect/Get.
+
+**Le piège à savoir expliquer.** Sans attribut `Path`, la portée par défaut d'un cookie est le **répertoire de l'URL qui l'a posé**, soit `/cgi-bin` — le reste du site ne le recevrait jamais. Et une expiration sur un `Path` différent ne remplace pas le cookie : elle en crée un **second**, que le navigateur renvoie à côté du premier. D'où `Path=/` partout, à la pose comme à la suppression.
+
+**Détail complet : `docs/CGI.md` §9ter, `docs/HEADERS.md` §6.2, `docs/SECURITY.md` §7.3.**
+
+**Reste ⬜.** Exécution des tests dans le container (`docs/CGI.md` §9) — le contrôle décisif étant les **deux** lignes `Set-Cookie` de la première réponse.

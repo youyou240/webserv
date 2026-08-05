@@ -30,6 +30,18 @@ static bool	isFramingHeader(std::string const & name)
 	return (lower == "content-length" || lower == "transfer-encoding");
 }
 
+static bool	hasCtl(std::string const & value)
+{
+	for (size_t i = 0; i < value.size(); ++i)
+	{
+		unsigned char	c = static_cast<unsigned char>(value[i]);
+
+		if ((c < 32 && c != '\t') || c == 127)
+			return (true);
+	}
+	return (false);
+}
+
 HttpResponse::HttpResponse(void) : _code(200) {}
 
 void	HttpResponse::setStatus(int code) {_code = code;}
@@ -37,15 +49,23 @@ int	HttpResponse::getCode(void) const {return (_code);}
 
 void	HttpResponse::setHeader(std::string const & key, std::string const & value)
 {
-	if (isFramingHeader(key))
+	if (isFramingHeader(key) || hasCtl(value))
 		return ;
-	_headers[key] = value;
+	_headers.erase(key);
+	_headers.insert(std::make_pair(key, value));
+}
+
+void	HttpResponse::addHeader(std::string const & key, std::string const & value)
+{
+	if (isFramingHeader(key) || hasCtl(value))
+		return ;
+	_headers.insert(std::make_pair(key, value));
 }
 
 void	HttpResponse::setBody(std::string const & body, std::string const & contentType)
 {
 	_body = body;
-	_headers["Content-Type"] = contentType;
+	this->setHeader("Content-Type", contentType);
 }
 
 std::string	HttpResponse::serialize(void) const
@@ -57,7 +77,7 @@ std::string	HttpResponse::serialize(void) const
 	oss << "Date: " << httpDate() << "\r\n";
 	if (_code != 204)
 		oss << "Content-Length: " << _body.size() << "\r\n";
-	for (std::map<std::string, std::string>::const_iterator it = _headers.begin(); it != _headers.end(); ++it)
+	for (std::multimap<std::string, std::string>::const_iterator it = _headers.begin(); it != _headers.end(); ++it)
 		oss << it->first << ": " << it->second << "\r\n";
 	oss << "\r\n";
 	if (_code != 204)

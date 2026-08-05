@@ -5,9 +5,9 @@
 
 class HttpResponse {
 
-	int					_code;
-	std::map<std::string, std::string>	_headers;
-	std::string				_body;
+	int						_code;
+	std::multimap<std::string, std::string>	_headers;
+	std::string					_body;
 
 public:
 
@@ -15,6 +15,7 @@ public:
 
 	void	setStatus(int code);
 	void	setHeader(std::string const & key, std::string const & value);
+	void	addHeader(std::string const & key, std::string const & value);
 	void	setBody(std::string const & body, std::string const & contentType);
 
 	int	getCode(void) const;

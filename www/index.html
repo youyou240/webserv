@@ -96,6 +96,7 @@
 				<li><a href="/cgi-bin/hello.php">/cgi-bin/hello.php</a> <span class="badge">200</span> PHP, needs <code>php-cgi</code> installed</li>
 				<li><a href="/cgi-bin/hello.cgi">/cgi-bin/hello.cgi</a> <span class="badge">200</span> compiled C, run <code>cc -o www/cgi-bin/hello.cgi www/cgi-bin/hello.c</code> first, otherwise <span class="badge">404</span></li>
 				<li><a href="/cgi-bin/guestbook.py">/cgi-bin/guestbook.py</a> <span class="badge">200</span> guestbook: GET lists, POST writes and deletes, shows <code>REMOTE_ADDR</code>, redirects with <span class="badge">302</span></li>
+				<li><a href="/cgi-bin/session.py">/cgi-bin/session.py</a> <span class="badge">200</span> cookies and sessions, see the section below</li>
 			</ul>
 
 			<form class="probe" method="post" action="/cgi-bin/hello.py">
@@ -105,6 +106,24 @@
 				<button type="submit">POST /cgi-bin/hello.py</button>
 				<p class="hint">Expected: <strong>200</strong>, with <code>REQUEST_METHOD = POST</code> and the body printed back.</p>
 			</form>
+		</section>
+
+		<section aria-labelledby="cookies">
+			<h2 id="cookies">Cookies and sessions</h2>
+			<ul>
+				<li><a href="/cgi-bin/session.py">/cgi-bin/session.py</a> <span class="badge">200</span> first visit emits
+				<strong>two</strong> <code>Set-Cookie</code> headers in the same response: <code>session_id</code>
+				(<code>HttpOnly</code>) and <code>last_seen</code>. Reload and the visit counter goes up.</li>
+				<li>The page prints the raw <code>Cookie</code> header it received, the <code>Set-Cookie</code> lines it
+				emitted, and what <code>document.cookie</code> can read &mdash; <code>session_id</code> is missing there,
+				which is exactly what <code>HttpOnly</code> is for.</li>
+				<li>Session state (visit count, nickname) lives server side in <code>www/cgi-bin/sessions.txt</code>.
+				Only the identifier travels in the cookie.</li>
+				<li>The logout button expires both cookies with <code>Max-Age=0</code> on the same <code>Path=/</code>,
+				then redirects with <span class="badge">302</span>.</li>
+			</ul>
+			<p class="hint">All cookies are set with <code>Path=/</code>. Without it the default scope would be
+			<code>/cgi-bin</code> and this very page would never receive them.</p>
 		</section>
 
 		<section aria-labelledby="hosts">

@@ -363,6 +363,8 @@ std::string	Cgi::buildResponse(void) const
 			contentType = value;
 		else if (isHopByHop(lkey))
 			continue ;
+		else if (lkey == "set-cookie")
+			resp.addHeader(key, value);
 		else
 		{
 			if (lkey == "location")
