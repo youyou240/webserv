@@ -19,8 +19,14 @@ static std::string	toLowerCopy(std::string const & s)
 	return (out);
 }
 
-Client::Client(int fd, Acceptor const & parent) : Arole(fd), _acceptor(&parent), _acceptorfd(parent.getFD()), _cgi(NULL), _bytes_send(0), _draining(false), _closeAfterWrite(false), _limitApplied(false), _continueHandled(false), _sendingContinue(false), _lastActivity(time(NULL)), _requestStart(0)
+Client::Client(int fd, Acceptor const & parent, Sockaddr const & peer) : Arole(fd), _acceptor(&parent), _acceptorfd(parent.getFD()), _peer(peer), _local(), _cgi(NULL), _bytes_send(0), _draining(false), _closeAfterWrite(false), _limitApplied(false), _continueHandled(false), _sendingContinue(false), _lastActivity(time(NULL)), _requestStart(0)
 {
+	struct sockaddr_in	raw;
+	socklen_t		len = sizeof(raw);
+
+	memset(&raw, 0, sizeof(raw));
+	if (getsockname(fd, (struct sockaddr *)&raw, &len) == 0 && len == sizeof(raw) && raw.sin_family == AF_INET)
+		_local.setStruct(raw);
 	this->_client += 1;
 	_activeClient[_acceptorfd].insert(std::pair<int, Client *>(_fd, this));
 	_ev.events = EPOLLIN;
@@ -32,6 +38,10 @@ Client::~Client(void)
 	this->_client -= 1;
 	_activeClient[this->_acceptorfd].erase(this->_fd);
 }
+
+Sockaddr const &	Client::getPeer(void) const {return (_peer);}
+Sockaddr const &	Client::getLocal(void) const {return (_local);}
+bool			Client::isKeepAlive(void) const {return (_request.isKeepAlive());}
 
 void	Client::cleanRequest(void)
 {
@@ -86,6 +96,23 @@ size_t	Client::resolveMaxBodySize(void) const
 	return (cfg.clientMaxBodySize);
 }
 
+std::string	Client::resolveServerName(const Server * srv) const
+{
+	std::vector<std::string> const &	names = srv->getConfig().serverNames;
+
+	if (!names.empty() && !names[0].empty())
+		return (names[0]);
+
+	std::string	host = _request.getHeader("host");
+	size_t		colon = host.find(':');
+
+	if (colon != std::string::npos)
+		host.erase(colon);
+	if (!host.empty())
+		return (host);
+	return (_local.getIp());
+}
+
 bool	Client::wantsContinue(void) const
 {
 	if (_request.getVersion() != "HTTP/1.1")
@@ -136,6 +163,10 @@ bool	Client::tryStartCgi(Epoll & manager)
 	if (!target.isCgi)
 		return (false);
 
+	LocationConfig const *	loc = Router::matchLocation(srv->getConfig(), _request.getPath());
+	if (loc != NULL && loc->methods.find(method) == loc->methods.end())
+		return (false);
+
 	if (!target.valid)
 	{
 		this->genErrorResponse(404);
@@ -145,7 +176,7 @@ bool	Client::tryStartCgi(Epoll & manager)
 		return (true);
 	}
 
-	_cgi = new Cgi(*this, _request, target.scriptPath, target.interpreter);
+	_cgi = new Cgi(*this, _request, target.scriptPath, target.interpreter, this->resolveServerName(srv));
 	if (!_cgi->start(manager))
 	{
 		delete _cgi;

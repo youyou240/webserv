@@ -126,7 +126,26 @@ fork()
 
 ### b-bis) L'environnement — `Cgi::buildEnv`
 
-Variables CGI/1.1 fixes (`GATEWAY_INTERFACE`, `SERVER_PROTOCOL`, `SERVER_SOFTWARE`, `REDIRECT_STATUS`) puis celles de la requête (`REQUEST_METHOD`, `QUERY_STRING`, `SCRIPT_FILENAME`, `SCRIPT_NAME`).
+Variables du serveur (`GATEWAY_INTERFACE`, `SERVER_SOFTWARE`, `REDIRECT_STATUS`, `SERVER_NAME`, `SERVER_PORT`), variables de la connexion (`REMOTE_ADDR`), puis celles de la requête (`SERVER_PROTOCOL`, `REQUEST_METHOD`, `REQUEST_URI`, `QUERY_STRING`, `SCRIPT_FILENAME`, `SCRIPT_NAME`).
+
+**Deux paires qu'il ne faut pas confondre :**
+
+| Variable | Contenu | Chez nous |
+|---|---|---|
+| `SCRIPT_NAME` | chemin **URL** du script (RFC 3875 §4.1.13) | `req.getPath()` — `/cgi-bin/hello.py` |
+| `SCRIPT_FILENAME` | chemin **disque** (extension nginx/PHP, hors RFC) | `_scriptPath` — `./www/cgi-bin/hello.py` |
+| `SERVER_NAME`/`SERVER_PORT` | **notre** côté de la connexion | vhost matché ; port via `getsockname` |
+| `REMOTE_ADDR` | **leur** côté | `accept` → `Client::getPeer()` |
+
+`SCRIPT_NAME` a longtemps porté le chemin disque : un script qui construit une URL à partir de cette variable (l'`action` d'un formulaire, typiquement) produisait alors un lien vers `./www/cgi-bin/…` → `404`.
+
+**D'où vient `REMOTE_ADDR`.** L'IP du client **n'existe pas dans la requête HTTP** : c'est une donnée de la couche transport. `Host:` dit qui le client veut *joindre*, pas qui il *est*, et `X-Forwarded-For` est purement déclaratif. La seule source est le `struct sockaddr` rempli par **`accept`** — `getpeername` étant **hors** de la liste de fonctions autorisées du sujet, il faut la capturer à ce moment précis. `Acceptor::handle_event` la passe donc au ctor du `Client`, qui la garde dans un `Sockaddr _peer` (et remplit symétriquement `_local` par `getsockname`, autorisé, pour `SERVER_PORT`).
+
+`SERVER_NAME` suit une chaîne de repli : 1er `server_name` du vhost matché → en-tête `Host` sans le port → IP locale.
+
+`SERVER_PROTOCOL` vaut `req.getVersion()` : un client HTTP/1.0 doit voir `HTTP/1.0`.
+
+Toutes ces valeurs sont **figées dans les membres du `Cgi` au constructeur**, donc avant le `fork` : `buildEnv` tourne dans le processus enfant et ne dépend d'aucun objet extérieur.
 
 `CONTENT_TYPE` et `CONTENT_LENGTH` sont exportés **sans préfixe** (RFC 3875 §4.1.2/§4.1.3 — c'est sous ce nom que PHP et `cgi.FieldStorage` les lisent). `CONTENT_LENGTH` vaut **`_body.size()`**, donc la taille du corps **dé-chunké**, pas la valeur de l'en-tête reçu : le script n'a jamais à savoir que la requête était chunked.
 
@@ -161,7 +180,13 @@ Status: 404 Not Found        ← optionnel : impose le code de réponse
 On coupe à la première ligne vide (`\n\n` ou `\r\n\r\n`, on tolère les deux). On lit les en-têtes :
 - **`Status:`** → fixe le **code** de la réponse HTTP (sinon `200`).
 - **`Content-Type:`** → devient le `Content-Type` de notre réponse.
+- **`Location:` sans `Status:`** → **`302`** (RFC 3875 §6.2.3, *client redirect*). Sans ça, le script renvoyait un `200` porteur d'un `Location` que le navigateur ignore.
+- les en-têtes **hop-by-hop** (`isHopByHop` : `connection`, `keep-alive`, `te`, `trailer`, `transfer-encoding`, `upgrade`, `proxy-*`) sont **jetés**. C'est le pendant, dans le sens réponse, du filtre `isExcludedFromEnv` du §5 b-bis : le cadrage et la gestion de connexion appartiennent au serveur, pas au script. Un `Transfer-Encoding: chunked` écrit par un script alors qu'on émet un corps en clair avec `Content-Length` ferait tenter au client un dé-chunkage de texte brut — c'est le vecteur du **response splitting**.
 - les autres en-têtes sont **recopiés** dans la réponse.
+
+**`Connection`** est posé par nos soins sur **toutes** les réponses CGI — `buildResponse` comme `Cgi::timeout` (le `504`) — d'après `Client::isKeepAlive()`. Avant, une réponse CGI ne portait aucun `Connection` : sur une requête `Connection: close`, le serveur fermait sans l'annoncer (RFC 7230 §6.1).
+
+**Le doublon `Content-Length`.** `buildResponse` recopiait dans la réponse le `Content-Length` écrit par le script, pendant que `HttpResponse::serialize` émettait le sien, calculé — deux en-têtes sur le fil. RFC 7230 §3.3.2 : un message à plusieurs `Content-Length` est invalide, et c'est le vecteur classique du **request smuggling** (curl tolère, un nginx en reverse-proxy renvoie `502`). Le correctif est posé un cran plus bas, dans `HttpResponse::setHeader`, qui **ignore** `Content-Length` et `Transfer-Encoding` quelle que soit la casse (`isFramingHeader`) : la classe est seule maîtresse du cadrage, et l'invariant protège désormais tous les appelants (Router, Cgi, Client), pas seulement ce chemin.
 
 Le corps du script devient le corps de notre réponse (avec un `Content-Length` **qu'on calcule** — cf. `HTTP_REQUESTS.md` §18 : **le sujet exige de dé-chunker et, si le CGI ne donne pas de `Content-Length`, c'est l'EOF qui marque la fin** — c'est exactement ce qu'on fait). Si le script ne produit **rien** → `502 Bad Gateway`.
 
@@ -188,6 +213,24 @@ Le corps du script devient le corps de notre réponse (avec un `Content-Length` 
 Le `Router` reste **synchrone** : il ne fait que **détecter et résoudre** le CGI ; c'est le `Client` (qui a accès à l'`Epoll`) qui **orchestre** l'asynchrone.
 
 ---
+
+## 9bis. Le livre d'or — `www/cgi-bin/guestbook.py`
+
+Les `hello.*` prouvent que le CGI **s'exécute**. Le livre d'or prouve qu'il **fonctionne** : une seule page exerce tout le contrat, et chaque garantie se vérifie à l'œil nu plutôt que dans un `curl -v`.
+
+| Ce qu'on voit | Ce que ça prouve |
+|---|---|
+| « depuis **172.17.0.1** » sous chaque message | `REMOTE_ADDR` arrive — et sert à quelque chose |
+| Les messages **survivent** au rechargement | le script ouvre `guestbook.txt` en chemin **relatif** : le fichier n'atterrit au bon endroit que si le `chdir` de `Cgi::start` a fonctionné |
+| Le message posté apparaît | le corps a traversé `stdin` : `CONTENT_LENGTH` juste, `CgiIn` qui écrit, pipe fermé → EOF |
+| Après un envoi, l'URL redevient propre | *Post/Redirect/Get* — le script renvoie **`Location:` seul, sans `Status:`** : le `302` doit venir de **nous** (§6). Si la règle RFC 3875 §6.2.3 régressait, la page resterait blanche |
+| La redirection tombe sur la bonne page | l'URL est reconstruite à partir de `SERVER_NAME` + `SERVER_PORT` + `SCRIPT_NAME` : le PRG ne peut pas marcher si l'une des trois est fausse. C'est précisément `SCRIPT_NAME` qui portait le chemin **disque** avant correction |
+| Le lien « essayer d'injecter du HTML » | pré-remplit le formulaire avec `<script>alert('xss')</script>` (au passage : `QUERY_STRING` en GET). Une fois posté, il s'affiche **en texte** — XSS **stocké** neutralisé par l'échappement du script |
+| « supprimer » sur une ligne, « tout effacer » | mutation d'état, donc `POST` (voir ci-dessous) |
+
+**Pourquoi la suppression n'utilise pas `DELETE`.** Elle ne le peut pas, et c'est cohérent. `Client::tryStartCgi` ne se déclenche que pour `GET` et `POST` : un `DELETE /cgi-bin/guestbook.py` part donc au Router, qui **supprime le script lui-même** — le comportement voulu pour `DELETE` sur un fichier. Ajouter `DELETE` au CGI rendrait cette URL ambiguë (supprimer le script, ou l'exécuter ?). Par ailleurs HTML ne sait émettre que `GET` et `POST` : tout le web réel supprime une ressource applicative par un `POST` porteur d'une intention (`action=delete`), ce que fait le livre d'or. Le vrai `DELETE` HTTP est déjà démontré ailleurs, sur `/uploads`, via `fetch` (cf. `FRONTEND.md`).
+
+Le stockage est volontairement bête (une ligne par message, champs percent-encodés séparés par des tabulations, plafond `MAX_ENTRIES`) : c'est un script de démonstration, pas une base de données.
 
 ## 9. Tester (les trois langages)
 
@@ -245,7 +288,9 @@ Deux points de robustesse :
 
 `tryStartCgi` se déclenche désormais pour **GET et POST** (un `DELETE` sur un `.cgi` reste une suppression de fichier normale).
 
+**Méthodes de la location.** `tryStartCgi` vérifie les méthodes autorisées **avant** de forker : si la méthode n'est pas dans `loc->methods`, il renvoie `false` au lieu de lancer le script. Le flux normal reprend alors son cours (`genResponse` → `Router::run`), et le Router produit le `405` + `Allow` qu'il sait déjà fabriquer (`RouterClass.cpp:370`). Aucune duplication de logique, et surtout aucun `fork` inutile : un POST sur une location CGI en `GET`-only exécutait le script avant de découvrir qu'il n'aurait pas dû.
+
 ## 12. Ce qui reste (raffinements)
 
-- **`PATH_INFO`** ⬜ : gérer un chemin après le script (`/cgi-bin/x.cgi/a/b`).
+- **`PATH_INFO`** ⬜ : gérer un chemin après le script (`/cgi-bin/x.cgi/a/b`). **Ce n'est pas une ligne dans `buildEnv` mais un chantier du Router** : `Router::resolveCgi` teste l'extension du **path complet**, donc `/cgi-bin/x.py/a/b` ne matche pas `.py` dans `loc->cgi` et part en fichier statique → `404`. Un vrai support demande de découper l'URL (plus long préfixe désignant un fichier existant ; le reste devient `PATH_INFO`, résolu contre le root en `PATH_TRANSLATED`). Sans chemin après le script, la variable est légitimement absente : la RFC 3875 autorise l'omission d'une variable non applicable.
 - **`FD_CLOEXEC` global** ⬜ : le poser aussi sur l'`epoll` et les sockets d'écoute/clients pour qu'ils ne fuient pas dans le processus CGI (aujourd'hui seuls les pipes sont protégés).

@@ -13,6 +13,23 @@ static std::string	httpDate(void)
 	return (std::string(buf));
 }
 
+static std::string	toLowerCopy(std::string const & s)
+{
+	std::string	out(s);
+
+	for (size_t i = 0; i < out.size(); ++i)
+		if (out[i] >= 'A' && out[i] <= 'Z')
+			out[i] += 32;
+	return (out);
+}
+
+static bool	isFramingHeader(std::string const & name)
+{
+	std::string	lower = toLowerCopy(name);
+
+	return (lower == "content-length" || lower == "transfer-encoding");
+}
+
 HttpResponse::HttpResponse(void) : _code(200) {}
 
 void	HttpResponse::setStatus(int code) {_code = code;}
@@ -20,6 +37,8 @@ int	HttpResponse::getCode(void) const {return (_code);}
 
 void	HttpResponse::setHeader(std::string const & key, std::string const & value)
 {
+	if (isFramingHeader(key))
+		return ;
 	_headers[key] = value;
 }
 

@@ -14,6 +14,7 @@
 # include <stdint.h>
 
 # include "../../Http/HttpRequestClass.hpp"
+# include "../socket/sockaddrClass.hpp"
 
 # define IDLE_TIMEOUT 60
 # define HEADER_TIMEOUT 30
@@ -81,6 +82,8 @@ class Client : public Arole {
 
 	Acceptor const *	_acceptor;
 	int			_acceptorfd;
+	Sockaddr		_peer;
+	Sockaddr		_local;
 
 	HttpRequest	_request;
 	std::string	_response;
@@ -101,15 +104,20 @@ class Client : public Arole {
 
 	const Server *	selectVhost(void) const;
 	size_t		resolveMaxBodySize(void) const;
+	std::string	resolveServerName(const Server * srv) const;
 	bool		wantsContinue(void) const;
 	bool		tryStartCgi(Epoll & manager);
 
 public:
 
-	Client(int fd, Acceptor const & parent);
+	Client(int fd, Acceptor const & parent, Sockaddr const & peer);
 	~Client(void);
 
 	virtual void	handle_event(Epoll & manager, uint32_t events);
+
+	Sockaddr const &	getPeer(void) const;
+	Sockaddr const &	getLocal(void) const;
+	bool			isKeepAlive(void) const;
 
 	bool	handleRead(Epoll & manager);
 	void	handleWrite(Epoll & manager);

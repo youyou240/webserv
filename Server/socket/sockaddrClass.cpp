@@ -41,7 +41,21 @@ unsigned short int		Sockaddr::getPort(void) const {return(_addr.sin_port);}
 struct in_addr const &		Sockaddr::getAddrStruct(void) const {return(_addr.sin_addr);}
 in_addr_t const &		Sockaddr::getAddr(void) const {return(_addr.sin_addr.s_addr);}
 
+std::string			Sockaddr::getIp(void) const
+{
+	uint32_t		ip = ntohl(_addr.sin_addr.s_addr);
+	std::ostringstream	out;
+
+	out << ((ip >> 24) & 0xFF) << "." << ((ip >> 16) & 0xFF) << "." << ((ip >> 8) & 0xFF) << "." << (ip & 0xFF);
+	return (out.str());
+}
+
 void			Sockaddr::setPort(unsigned short int Hport) {_addr.sin_port = htons(Hport);}
+
+void			Sockaddr::setStruct(struct sockaddr_in const & addr)
+{
+	memcpy(&_addr, &addr, sizeof(struct sockaddr_in));
+}
 
 void			Sockaddr::resolve(std::string const & host, uint16_t port)
 {
@@ -70,8 +84,6 @@ const char *	Sockaddr::badAddr::what(void) const throw() {return (_msg.c_str());
 
 std::ostream &	operator<<(std::ostream & o, Sockaddr const & addr)
 {
-	uint32_t	ip = ntohl(addr.getAddr());
-
-	o << "Family=" << addr.getFamily() << "\tPort=" << ntohs(addr.getPort()) << "\tAdresse=" << ((ip >> 24) & 0xFF) << "." << ((ip >> 16) & 0xFF) << "." << ((ip >> 8) & 0xFF) << "." << (ip & 0xFF);
+	o << "Family=" << addr.getFamily() << "\tPort=" << ntohs(addr.getPort()) << "\tAdresse=" << addr.getIp();
 	return (o);
 }

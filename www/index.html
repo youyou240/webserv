@@ -95,6 +95,7 @@
 				<li><a href="/cgi-bin/hello.py?name=jean&amp;id=42">/cgi-bin/hello.py?name=jean&amp;id=42</a> <span class="badge">200</span> Python, GET, echoes <code>QUERY_STRING</code></li>
 				<li><a href="/cgi-bin/hello.php">/cgi-bin/hello.php</a> <span class="badge">200</span> PHP, needs <code>php-cgi</code> installed</li>
 				<li><a href="/cgi-bin/hello.cgi">/cgi-bin/hello.cgi</a> <span class="badge">200</span> compiled C, run <code>cc -o www/cgi-bin/hello.cgi www/cgi-bin/hello.c</code> first, otherwise <span class="badge">404</span></li>
+				<li><a href="/cgi-bin/guestbook.py">/cgi-bin/guestbook.py</a> <span class="badge">200</span> guestbook: GET lists, POST writes and deletes, shows <code>REMOTE_ADDR</code>, redirects with <span class="badge">302</span></li>
 			</ul>
 
 			<form class="probe" method="post" action="/cgi-bin/hello.py">

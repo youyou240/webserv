@@ -74,10 +74,17 @@ void		Acceptor::closeAll(Epoll & manager)
 
 void	Acceptor::handle_event(Epoll & manager, uint32_t)
 {
-	int fd = accept(_fd, NULL, NULL);
+	struct sockaddr_in	raw;
+	socklen_t		len = sizeof(raw);
+	Sockaddr		peer;
+
+	memset(&raw, 0, sizeof(raw));
+	int fd = accept(_fd, (struct sockaddr *)&raw, &len);
 	if (fd == -1)
 		return ;
-	Client	*client = new Client(fd, *this);
+	if (len == sizeof(raw) && raw.sin_family == AF_INET)
+		peer.setStruct(raw);
+	Client	*client = new Client(fd, *this, peer);
 	if (fcntl(fd, F_SETFL, O_NONBLOCK) == -1)
 	{
 		client->closeConnection(manager);

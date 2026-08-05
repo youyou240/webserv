@@ -26,8 +26,10 @@ public:
 	unsigned short int	getPort(void) const;
 	struct in_addr const &	getAddrStruct(void) const;
 	in_addr_t const &	getAddr(void) const;
+	std::string		getIp(void) const;
 
 	void			setPort(unsigned int short);
+	void			setStruct(struct sockaddr_in const & addr);
 	void			resolve(std::string const & host, uint16_t port);
 
 	class badAddr : public std::exception {

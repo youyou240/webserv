@@ -68,6 +68,12 @@ class Cgi {
 	std::string				_interpreter;
 	std::string				_method;
 	std::string				_query;
+	std::string				_uri;
+	std::string				_scriptName;
+	std::string				_version;
+	std::string				_remoteAddr;
+	std::string				_serverName;
+	std::string				_serverPort;
 	std::string				_contentType;
 	std::string				_body;
 	std::map<std::string, std::string>	_headers;
@@ -88,7 +94,7 @@ class Cgi {
 
 public:
 
-	Cgi(Client & client, HttpRequest const & req, std::string const & scriptPath, std::string const & interpreter);
+	Cgi(Client & client, HttpRequest const & req, std::string const & scriptPath, std::string const & interpreter, std::string const & serverName);
 	~Cgi(void);
 
 	bool	start(Epoll & manager);

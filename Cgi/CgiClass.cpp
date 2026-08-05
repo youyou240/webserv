@@ -41,17 +41,25 @@ static void	splitScriptPath(std::string const & path, std::string & dir, std::st
 	}
 }
 
-static bool	isExcludedFromEnv(std::string const & name)
+static bool	isHopByHop(std::string const & name)
 {
-	static char const *	excluded[] = {
+	static char const *	hop[] = {
 		"connection", "keep-alive", "proxy-authenticate", "proxy-authorization",
-		"te", "trailer", "transfer-encoding", "upgrade",
-		"content-type", "content-length", NULL
+		"te", "trailer", "transfer-encoding", "upgrade", NULL
 	};
 
-	for (size_t i = 0; excluded[i] != NULL; ++i)
-		if (name == excluded[i])
+	for (size_t i = 0; hop[i] != NULL; ++i)
+		if (name == hop[i])
 			return (true);
+	return (false);
+}
+
+static bool	isExcludedFromEnv(std::string const & name)
+{
+	if (isHopByHop(name))
+		return (true);
+	if (name == "content-type" || name == "content-length")
+		return (true);
 	return (name.find('_') != std::string::npos);
 }
 
@@ -135,11 +143,19 @@ void	CgiIn::handle_event(Epoll & manager, uint32_t events)
 	return ;
 }
 
-Cgi::Cgi(Client & client, HttpRequest const & req, std::string const & scriptPath, std::string const & interpreter)
-	: _client(client), _pid(-1), _out(NULL), _in(NULL), _start(0), _scriptPath(scriptPath), _interpreter(interpreter)
+Cgi::Cgi(Client & client, HttpRequest const & req, std::string const & scriptPath, std::string const & interpreter, std::string const & serverName)
+	: _client(client), _pid(-1), _out(NULL), _in(NULL), _start(0), _scriptPath(scriptPath), _interpreter(interpreter), _serverName(serverName)
 {
+	std::ostringstream	port;
+
 	_method = req.getMethod();
 	_query = req.getQuery();
+	_uri = req.getUri();
+	_scriptName = req.getPath();
+	_version = req.getVersion();
+	_remoteAddr = client.getPeer().getIp();
+	port << ntohs(client.getLocal().getPort());
+	_serverPort = port.str();
 	_contentType = req.getHeader("content-type");
 	_body = req.getBody();
 	_headers = req.getHeaders();
@@ -155,13 +171,17 @@ std::vector<std::string>	Cgi::buildEnv(void) const
 	std::ostringstream		cl;
 
 	env.push_back("GATEWAY_INTERFACE=CGI/1.1");
-	env.push_back("SERVER_PROTOCOL=HTTP/1.1");
+	env.push_back("SERVER_PROTOCOL=" + _version);
 	env.push_back("SERVER_SOFTWARE=webserv");
+	env.push_back("SERVER_NAME=" + _serverName);
+	env.push_back("SERVER_PORT=" + _serverPort);
+	env.push_back("REMOTE_ADDR=" + _remoteAddr);
 	env.push_back("REDIRECT_STATUS=200");
 	env.push_back("REQUEST_METHOD=" + _method);
+	env.push_back("REQUEST_URI=" + _uri);
 	env.push_back("QUERY_STRING=" + _query);
 	env.push_back("SCRIPT_FILENAME=" + _scriptPath);
-	env.push_back("SCRIPT_NAME=" + _scriptPath);
+	env.push_back("SCRIPT_NAME=" + _scriptName);
 	if (!_contentType.empty())
 		env.push_back("CONTENT_TYPE=" + _contentType);
 	cl << _body.size();
@@ -283,6 +303,7 @@ std::string	Cgi::buildResponse(void) const
 {
 	HttpResponse	resp;
 
+	resp.setHeader("Connection", _client.isKeepAlive() ? "keep-alive" : "close");
 	if (_output.empty())
 	{
 		resp.setStatus(502);
@@ -313,6 +334,8 @@ std::string	Cgi::buildResponse(void) const
 	}
 
 	int		status = 200;
+	bool		hasStatus = false;
+	bool		hasLocation = false;
 	std::string	contentType = "text/plain";
 	std::istringstream	hs(headerPart);
 	std::string		line;
@@ -334,13 +357,22 @@ std::string	Cgi::buildResponse(void) const
 			ss >> status;
 			if (status < 100 || status > 599)
 				status = 200;
+			hasStatus = true;
 		}
 		else if (lkey == "content-type")
 			contentType = value;
+		else if (isHopByHop(lkey))
+			continue ;
 		else
+		{
+			if (lkey == "location")
+				hasLocation = true;
 			resp.setHeader(key, value);
+		}
 	}
 
+	if (hasLocation && !hasStatus)
+		status = 302;
 	resp.setStatus(status);
 	resp.setBody(body, contentType);
 	return (resp.serialize());
@@ -405,6 +437,7 @@ void	Cgi::timeout(Epoll & manager)
 	kill(_pid, SIGKILL);
 	_reaping[_pid] = time(NULL);
 	resp.setStatus(504);
+	resp.setHeader("Connection", _client.isKeepAlive() ? "keep-alive" : "close");
 	resp.setBody(HttpResponse::defaultErrorPage(504), "text/html");
 	_client.deliverCgiResponse(resp.serialize(), manager);
 	this->teardown(manager);
