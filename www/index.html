@@ -140,7 +140,7 @@
 			<p>These need <code>curl</code>, because the browser normalises or refuses to send them.</p>
 			<ul>
 				<li>Body over the limit &rarr; <span class="badge">413</span>:
-				<code>head -c 20000000 /dev/zero &gt; big.bin &amp;&amp; curl -T big.bin http://localhost:8080/uploads/big.bin</code></li>
+				<code>head -c 20000000 /dev/zero &gt; big.bin &amp;&amp; curl --data-binary @big.bin http://localhost:8080/uploads/big.bin</code></li>
 				<li>Chunked request body:
 				<code>curl -H 'Transfer-Encoding: chunked' -d @Makefile http://localhost:8080/cgi-bin/hello.py</code></li>
 				<li>Path traversal &rarr; <span class="badge">403</span>: the browser resolves <code>..</code> before sending, so use

@@ -232,6 +232,8 @@ Content-Type: image/png\r\n
 Le `boundary` (annoncé dans le Content-Type) est une **chaîne séparatrice** entre les parties. Chaque partie a ses propres mini-headers (dont `filename`) puis ses données.
 
 > **Pour notre serveur** : pour l'upload, on lit le `boundary`, on découpe le corps en parties, et pour chaque partie qui a un `filename`, on écrit les données dans le dossier d'upload de la config. C'est la partie la plus fastidieuse du POST.
+>
+> Le traitement complet de ce corps une fois assemblé — anatomie détaillée du multipart, code de `Upload::parseMultipart` commenté, sécurité du `filename`, codes de statut — est dans **`docs/UPLOAD.md`**.
 
 ---
 

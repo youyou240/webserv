@@ -602,7 +602,7 @@ Content-Length: 29
 content=hello from the browser
 ```
 
-Ni multipart, ni urlencoded : `Upload::handle` retombe donc sur `handleRaw`, qui prend le nom du fichier **dans l'URL** (`notes.txt`) au lieu d'un en-tête de partie. C'est le chemin qu'on teste habituellement avec `curl -T`, ici déclenché depuis le navigateur.
+Ni multipart, ni urlencoded : `Upload::handle` retombe donc sur `handleRaw`, qui prend le nom du fichier **dans l'URL** (`notes.txt`) au lieu d'un en-tête de partie. C'est le chemin qu'on teste habituellement avec `curl --data-binary @fichier`, ici déclenché depuis le navigateur. (Attention : `curl -T` enverrait un **`PUT`**, méthode que notre parseur rejette en `501`.)
 
 Le fichier contiendra `content=hello from the browser`, avec le nom du champ — c'est bien le corps **brut**, non interprété. C'est le but.
 

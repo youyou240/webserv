@@ -187,6 +187,8 @@ Le `Content-Type` vient de `MimeTypes::forPath` (`Router/MimeTypes`), une petite
 
 ## 6bis. `POST` — upload de fichiers (`Router/Upload`)
 
+> **Résumé.** Le chapitre complet — GET vs POST, `Expect: 100-continue`, anatomie du `multipart/form-data` sur le fil, lecture intégrale de `Router/UploadClass.cpp`, limites connues et banc d'essai — est dans **`docs/UPLOAD.md`**.
+
 `handlePost` traite un POST sur une location **où l'upload est activé** (`upload_store` présent → `uploadEnabled`). Sinon → `403` (rien à faire d'un corps ici). Le corps complet est déjà assemblé par le parseur (`_req.getBody()`, dé-chunké si besoin) : `Upload::handle` l'écrit sur disque.
 
 Deux formats gérés, selon le `Content-Type` :
